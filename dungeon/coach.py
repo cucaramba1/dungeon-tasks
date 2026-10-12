@@ -164,14 +164,14 @@ def _explain(out: bytes, err: bytes) -> tuple[str, bool]:
     return text.strip()[:300], limit
 
 
-async def ask_claude(instructions: str, data: dict, schema: dict) -> dict:
+async def ask_claude(instructions: str, data: dict, schema: dict, system: str | None = None) -> dict:
     """Один вызов `claude -p` без инструментов: инструкция + данные JSON -> ответ строго по схеме.
     Модель по умолчанию Sonnet: планированию хватает, а недельный лимит подписки тратится медленнее."""
     payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"), default=str)
     prompt = instructions + "\n\n```json\n" + payload + "\n```"
     env = {**os.environ, "PATH": f"{os.path.dirname(config.CLAUDE_BIN)}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"}
     args = [config.CLAUDE_BIN, "-p", "--output-format", "json", "--tools", "", "--no-session-persistence",
-            "--system-prompt", SYSTEM, "--json-schema", json.dumps(schema, ensure_ascii=False)]
+            "--system-prompt", system or SYSTEM, "--json-schema", json.dumps(schema, ensure_ascii=False)]
     if config.COACH_MODEL:
         args += ["--model", config.COACH_MODEL]
     try:
