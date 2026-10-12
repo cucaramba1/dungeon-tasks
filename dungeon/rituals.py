@@ -214,3 +214,255 @@ class Rituals:
         if ref_task and (t := self.svc.get(ref_task)) and t["due_at"]:
             return parse_iso(t["due_at"])
         return None
+
+    # ---------- серия ----------
+    def series_exists(self, chat: dict) -> bool:
+        return self.occurrence_task(chat) is not None
+
+    def occurrence_near(self, chat: dict, start: datetime):
+        """Открытая запись серии в пределах трёх дней от даты анонса."""
+        if not chat.get("series"):
+            return None
+        best = None
+        for t in self.db.q("SELECT * FROM tasks WHERE is_habit=1 AND status='open' AND lower(title)=lower(?) "
+                           "AND due_at IS NOT NULL", (chat["series"],)):
+            gap = abs(parse_iso(t["due_at"]) - start)
+            if gap <= timedelta(days=3) and (best is None or gap < best[0]):
+                best = (gap, t)
+        return best[1] if best else None
+
+    @staticmethod
+    def _merge_time(new: datetime, has_time: bool, has_old: bool, old_iso: str | None):
+        """Перенос «на субботу» без времени не должен терять время занятия."""
+        if has_time or not has_old or not old_iso:
+            return new, has_time
+        old = parse_iso(old_iso).astimezone(new.tzinfo)
+        return datetime.combine(new.date(), old.timetz()), True
+
+    # ---------- переносы и отмены ----------
+    def new_changes(self) -> list:
+        return self.db.q("SELECT * FROM events_feed WHERE kind IN ('move','cancel') AND status='new' ORDER BY id")
+
+    def pick_target(self, row_id: int, ref: str) -> None:
+        """Некит выбрал кнопкой, какое событие переносили: теперь изменение можно применить."""
+        if ref[0] == "e":
+            self.db.x("UPDATE events_feed SET ref_id=?, status='new', notified_at=NULL WHERE id=?", (int(ref[1:]), row_id))
+        else:
+            self.db.x("UPDATE events_feed SET ref_task=?, status='new', notified_at=NULL WHERE id=?",
+                      (int(ref[1:]), row_id))
+
+    def apply_change(self, row_id: int) -> list[int]:
+        """Применить перенос или отмену. Возвращает id задач, которые изменились (для страховки и календаря)."""
+        row = self.feed(row_id)
+        new = parse_iso(row["starts_at"]).astimezone(self.tz)
+        ev = self.feed(row["ref_id"]) if row["ref_id"] else None
+        t = self.svc.get(ev["task_id"] if ev else row["ref_task"]) if (ev or row["ref_task"]) else None
+        if t and t["status"] != "open":
+            t = None
+        undo: dict = {"title": ev["title"] if ev else (t["title"] if t else row["title"])}
+        touched: list[int] = []
+        if row["kind"] == "move":
+            src_iso, src_has = (ev["starts_at"], ev["has_time"]) if ev else ((t["due_at"], t["has_time"]) if t else (None, 0))
+            when, w_has = self._merge_time(new, bool(row["has_time"]), bool(src_has), src_iso)
+            undo["old"] = {"starts_at": src_iso, "has_time": src_has}
+            undo["new"] = {"starts_at": iso(when), "has_time": int(w_has)}
+            if ev:
+                undo["event"] = {"id": ev["id"], "starts_at": ev["starts_at"], "has_time": ev["has_time"]}
+                self.db.x("UPDATE events_feed SET starts_at=?, has_time=? WHERE id=?", (iso(when), int(w_has), ev["id"]))
+            if t:
+                undo["task"] = {"id": t["id"], "due_at": t["due_at"], "has_time": t["has_time"]}
+                self.svc.set_due(t["id"], when, w_has)
+                touched.append(t["id"])
+        else:
+            if ev:
+                undo["event"] = {"id": ev["id"], "status": ev["status"]}
+                undo["old"] = {"starts_at": ev["starts_at"], "has_time": ev["has_time"]}
+                self.db.x("UPDATE events_feed SET status='cancelled' WHERE id=?", (ev["id"],))
+            if t:
+                undo.setdefault("old", {"starts_at": t["due_at"], "has_time": t["has_time"]})
+                spawned = None
+                if t["is_habit"] and t["rrule"]:
+                    nxt = self.svc.skip(t["id"])      # отмена организатора: без штрафа, серия идёт дальше
+                    spawned = nxt["id"] if nxt else None
+                else:
+                    self.svc.delete(t["id"])
+                undo["task"] = {"id": t["id"], "spawned": spawned}
+                touched += [t["id"]] + ([spawned] if spawned else [])
+        self.db.x("UPDATE events_feed SET status='applied', undo=?, notified_at=NULL WHERE id=?",
+                  (json.dumps(undo, ensure_ascii=False), row_id))
+        return touched
+
+    def undo(self, row_id: int) -> list[int]:
+        row = self.feed(row_id)
+        if not row or row["status"] != "applied":
+            return []
+        u = json.loads(row["undo"] or "{}")
+        touched: list[int] = []
+        if e := u.get("event"):
+            if row["kind"] == "move":
+                self.db.x("UPDATE events_feed SET starts_at=?, has_time=? WHERE id=?",
+                          (e["starts_at"], e["has_time"], e["id"]))
+            else:
+                self.db.x("UPDATE events_feed SET status=? WHERE id=?", (e["status"], e["id"]))
+        if t := u.get("task"):
+            if row["kind"] == "move":
+                self.svc.set_due(t["id"], parse_iso(t["due_at"]), bool(t["has_time"]))
+            else:
+                self.svc.reopen(t["id"])
+                if t.get("spawned"):
+                    self.svc.delete(t["spawned"])
+                    touched.append(t["spawned"])
+            touched.append(t["id"])
+        self.db.x("UPDATE events_feed SET status='undone' WHERE id=?", (row_id,))
+        return touched
+
+    # ---------- решения Некита по карточке ----------
+    def _notes(self, ev) -> str:
+        extra = json.loads(ev["extra"] or "{}")
+        lines = [ev["link"]]
+        for key, label in (("book", "Книга"), ("place", "Место"), ("variant", "Формат"), ("description", "О чём")):
+            if extra.get(key):
+                lines.append(f"{label}: {extra[key]}")
+        return "\n".join(x for x in lines if x)
+
+    def accept(self, event_id: int) -> dict:
+        """«Иду» / «Подтвердить»: занятие серии подтверждается, обычное событие становится разовой задачей."""
+        ev = self.feed(event_id)
+        chat = chat_cfg(ev["chat_id"]) or {}
+        start = parse_iso(ev["starts_at"]).astimezone(self.tz)
+        t = self.occurrence_near(chat, start)
+        if t:
+            when, has = self._merge_time(start, bool(ev["has_time"]), bool(t["has_time"]), t["due_at"])
+            if parse_iso(t["due_at"]).astimezone(self.tz) != when:
+                self.svc.set_due(t["id"], when, has)
+            text = f"Подтвердил: {t['title']}"
+        elif self.series_exists(chat):
+            self.db.x("UPDATE events_feed SET status='accepted' WHERE id=?", (event_id,))
+            return {"task_id": None, "title": ev["title"],
+                    "text": "Записал. Занятие появится в плане, когда дойдёт очередь серии."}
+        else:
+            t = self.svc.create_parsed(Parsed(title=ev["title"], quadrant=4, due_at=start,
+                                              has_time=bool(ev["has_time"])), "ritual")
+            text = f"В плане: {t['title']}"
+        self.db.x("UPDATE tasks SET notes=? WHERE id=?", (self._notes(ev), t["id"]))
+        self.db.x("UPDATE events_feed SET status='accepted', task_id=? WHERE id=?", (t["id"], event_id))
+        return {"task_id": t["id"], "title": t["title"], "text": text}
+
+    def _until_utc(self, chat: dict) -> str | None:
+        until = as_date(chat.get("until"))
+        if not until:
+            return None
+        end = datetime.combine(until, time(23, 59, 59), self.tz)
+        return end.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    def make_ritual(self, event_id: int) -> dict:
+        """«В ритуал» (или «Завести ритуал» для йоги): серия на каждую неделю с этого анонса."""
+        ev = self.feed(event_id)
+        chat = chat_cfg(ev["chat_id"]) or {}
+        start = parse_iso(ev["starts_at"]).astimezone(self.tz)
+        byday = ",".join(chat["attend_days"]) if chat.get("attend_days") else DAYS[start.weekday()]
+        rule = f"FREQ=WEEKLY;BYDAY={byday}" + (f";UNTIL={u}" if (u := self._until_utc(chat)) else "")
+        title = chat.get("series") or chat["name"]
+        t = self.svc.create_parsed(Parsed(title=title, quadrant=2, is_habit=True, due_at=start,
+                                          has_time=bool(ev["has_time"]), rrule=rule), "ritual")
+        self.db.x("UPDATE tasks SET notes=? WHERE id=?", (self._notes(ev), t["id"]))
+        self.db.x("UPDATE events_feed SET status='accepted', task_id=? WHERE id=?", (t["id"], event_id))
+        return {"task_id": t["id"], "title": title, "text": f"🕯 Завёл ритуал: {title}"}
+
+    def decline(self, event_id: int) -> None:
+        self.db.x("UPDATE events_feed SET status='declined' WHERE id=?", (event_id,))
+
+    def skip(self, event_id: int, bad: bool) -> tuple[list[str], list[int]]:
+        """Некит пропускает занятие. Прогул (bad) штрафуется, важная причина нет. Разовая задача просто удаляется."""
+        ev = self.feed(event_id)
+        chat = chat_cfg(ev["chat_id"]) or {}
+        t = self.svc.get(ev["task_id"]) if ev["task_id"] else None
+        if t is None:
+            t = self.occurrence_near(chat, parse_iso(ev["starts_at"]).astimezone(self.tz))
+        msgs: list[str] = []
+        touched: list[int] = []
+        if t and t["status"] == "open":
+            if t["is_habit"] and t["rrule"]:
+                if bad:
+                    msgs, nxt = self.svc.skip_missed(t["id"])
+                else:
+                    nxt = self.svc.skip(t["id"])
+                touched = [t["id"]] + ([nxt["id"]] if nxt else [])
+            else:
+                msgs = self.svc.delete(t["id"])
+                touched = [t["id"]]
+        self.db.x("UPDATE events_feed SET status='skipped' WHERE id=?", (event_id,))
+        return msgs, touched
+
+    def retime(self, event_id: int, due: datetime, has_time: bool) -> None:
+        """«✏ Поправить»: Некит сам назвал верные дату и время."""
+        ev = self.feed(event_id)
+        self.db.x("UPDATE events_feed SET starts_at=?, has_time=?, needs_check=0 WHERE id=?",
+                  (iso(due), int(has_time), event_id))
+        if ev["task_id"] and (t := self.svc.get(ev["task_id"])) and t["status"] == "open":
+            self.svc.set_due(t["id"], due, has_time)
+
+    # ---------- очереди рассылки ----------
+    _ALIVE = "((has_time=1 AND starts_at>=:now) OR (has_time=0 AND starts_at>=:day))"
+
+    def _times(self, now: datetime) -> dict:
+        return {"now": iso(now), "day": iso(now.replace(hour=0, minute=0, second=0, microsecond=0))}
+
+    def unsent_changes(self) -> list:
+        return self.db.q("SELECT * FROM events_feed WHERE kind IN ('move','cancel') AND notified_at IS NULL "
+                         "AND status IN ('applied','ambiguous','unresolved') ORDER BY id")
+
+    def unsent_cards(self, now: datetime, within: timedelta | None = None) -> list:
+        args = self._times(now)
+        sql = (f"SELECT * FROM events_feed WHERE kind='announce' AND status='new' AND notified_at IS NULL "
+               f"AND {self._ALIVE}")
+        if within:
+            sql += " AND starts_at<=:soon"
+            args["soon"] = iso(now + within)
+        return self.db.q(sql + " ORDER BY starts_at", args)
+
+    def reminders(self, now: datetime) -> list:
+        gap = timedelta(hours=float(self.db.get("ritual_remind_h")))
+        return self.db.q("SELECT * FROM events_feed WHERE kind='announce' AND status='new' AND notified_at IS NOT NULL "
+                         f"AND reminded_at IS NULL AND notified_at<=:gap AND {self._ALIVE}",
+                         {**self._times(now), "gap": iso(now - gap)})
+
+    def mark_sent(self, row_id: int, now: datetime) -> None:
+        self.db.x("UPDATE events_feed SET notified_at=? WHERE id=?", (iso(now), row_id))
+
+    def mark_reminded(self, row_id: int, now: datetime) -> None:
+        self.db.x("UPDATE events_feed SET reminded_at=? WHERE id=?", (iso(now), row_id))
+
+    def expire(self, now: datetime) -> None:
+        """Анонс, который уже начался (или день прошёл), гаснет сам."""
+        self.db.x("UPDATE events_feed SET status='expired' WHERE kind='announce' AND status='new' AND "
+                  "((has_time=1 AND starts_at<:now) OR (has_time=0 AND starts_at<:day))", self._times(now))
+
+    def digest_slots(self) -> list[time]:
+        return [hm(s.strip()) for s in (self.db.get("ritual_digest") or "").split(",") if s.strip()]
+
+    def digest_due(self, now: datetime) -> bool:
+        """Подборка по слотам 10:00, 16:00, 22:00: каждый слот срабатывает один раз (с догоном после сна ноута)."""
+        passed = [s for s in self.digest_slots() if s <= now.time()]
+        if not passed:
+            return False
+        mark = f"{now.date().isoformat()}:{max(passed):%H:%M}"
+        if self.db.get("rt_digest_done") == mark:
+            return False
+        self.db.set("rt_digest_done", mark)
+        return True
+
+    def listing(self, now: datetime) -> list[dict]:
+        """Для раздела PWA: ближайшие анонсы, которые ещё актуальны."""
+        rows = self.db.q(f"SELECT * FROM events_feed WHERE kind='announce' AND status IN ('new','accepted') "
+                         f"AND {self._ALIVE} ORDER BY starts_at", self._times(now))
+        wd = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+        out = []
+        for r in rows:
+            d = parse_iso(r["starts_at"]).astimezone(now.tzinfo)
+            extra = json.loads(r["extra"] or "{}")
+            out.append({"id": r["id"], "title": r["title"], "ritual": r["ritual"], "link": r["link"],
+                        "status": r["status"], "needs_check": bool(r["needs_check"]),
+                        "when": f"{wd[d.weekday()]} {d:%d.%m}" + (f" {d:%H:%M}" if r["has_time"] else ""),
+                        "extra": " · ".join(str(extra[k]) for k in ("book", "variant", "place") if extra.get(k))})
+        return out
