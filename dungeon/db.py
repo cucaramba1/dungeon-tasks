@@ -166,6 +166,23 @@ def parse_iso(s: str | None) -> datetime | None:
     return datetime.fromisoformat(s) if s else None
 
 
+RITUAL_COLS = {
+    "kind": "TEXT DEFAULT 'afisha'",   # afisha | announce | move | cancel
+    "author": "TEXT",
+    "ritual": "TEXT",                  # имя чата из events.yaml (targeted)
+    "extra": "TEXT",                   # JSON: book, place, description, variant, candidates
+    "status": "TEXT DEFAULT 'new'",    # new | accepted | declined | skipped | cancelled | applied | undone | expired | ambiguous | unresolved
+    "task_id": "INTEGER",
+    "ref_id": "INTEGER",               # для move/cancel: какую строку events_feed двигаем
+    "ref_task": "INTEGER",             # для move/cancel серии: какую задачу двигаем
+    "notified_at": "TEXT",
+    "reminded_at": "TEXT",
+    "llm_raw": "TEXT",
+    "undo": "TEXT",
+    "needs_check": "INTEGER DEFAULT 0",
+}
+
+
 class DB:
     def __init__(self, path: Path | str):
         self.path = str(path)
@@ -186,6 +203,10 @@ class DB:
             self.conn.execute("ALTER TABLE tasks ADD COLUMN duration_min INTEGER")
         if "caldav_uid" not in cols:
             self.conn.execute("ALTER TABLE tasks ADD COLUMN caldav_uid TEXT")
+        feed = {r[1] for r in self.conn.execute("PRAGMA table_info(events_feed)")}
+        for col, ddl in RITUAL_COLS.items():
+            if col not in feed:
+                self.conn.execute(f"ALTER TABLE events_feed ADD COLUMN {col} {ddl}")
 
     def q(self, sql: str, args: tuple | dict = ()) -> list[sqlite3.Row]:
         with self.lock:

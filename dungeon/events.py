@@ -181,7 +181,10 @@ class Events:
         """Пройти по каналам, забрать новые посты. Возвращает статистику."""
         stats = {"posts": 0, "events": 0, "errors": 0}
         fails = 0
+        skip = {c["id"] for c in cfg().get("targeted", [])}
         for ch in cfg()["channels"]:
+            if ch["id"] in skip:  # эти чаты читает rituals.py
+                continue
             last = int(self.db.get(f"ev_last:{ch['id']}", "0") or 0)
             try:
                 posts = await fetch(ch["id"], 30 if last else 50)
@@ -224,7 +227,7 @@ class Events:
 
     def upcoming(self, frm: datetime, to: datetime, limit: int = 10) -> list[dict]:
         """События в окне, лучшие первыми. Отвергнутые и уже предложенные сегодня не берём."""
-        rows = self.db.q("SELECT * FROM events_feed WHERE starts_at>=? AND starts_at<? AND vote>=0",
+        rows = self.db.q("SELECT * FROM events_feed WHERE starts_at>=? AND starts_at<? AND vote>=0 AND kind='afisha'",
                          (iso(frm), iso(to)))
         scored = sorted(rows, key=lambda r: (-self.weight(r["category"]) - 0.5 * r["vote"], r["starts_at"]))
         return [dict(r) for r in scored[:limit]]
