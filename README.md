@@ -87,7 +87,7 @@
 scripts/setup.sh install    # автозапуск (launchd), ключ для PWA, tailscale serve
 scripts/setup.sh restart    # после правки .env или конфигов
 scripts/setup.sh status | logs | stop | uninstall | url
-uv run pytest               # 194 теста: парсер, игра, тикер, чек-листы, планирование, афиша, досуг, Apple Calendar, точечные чаты
+uv run pytest               # 207 тестов: парсер, игра, тикер, чек-листы, планирование, афиша, досуг, Apple Calendar, точечные чаты
 ```
 Настройки времени в боте: `/settings`, `/set morning 07:30`, `/set quiet_from 23:00`.
 Тексты мотивации: `config/motivation.yaml`. Пришли боту любой стикер, и он попадёт в арсенал напоминалок.
