@@ -34,8 +34,11 @@ async def call(tool: str, args: dict, timeout: int = 30) -> dict:
     return data
 
 
-async def history(chat_id: int, limit: int = 30) -> list[dict]:
-    data = await call("get_history", {"chat_id": chat_id, "limit": limit})
+async def history(chat_id: int, limit: int = 30, topic_id: int | None = None) -> list[dict]:
+    args = {"chat_id": chat_id, "limit": limit}
+    if topic_id:
+        args["topic_id"] = topic_id  # форум: читаем один топик
+    data = await call("get_history", args)
     if isinstance(data, dict) and "results" in data:
         return data["results"]
     raise RuntimeError(f"telegram-mcp: неожиданный ответ {str(data)[:200]}")
