@@ -235,3 +235,29 @@ def test_claude_down_notice_is_sent_once_per_day(app, monkeypatch):
     run(ritual_flows.collect(app))
     run(ritual_flows.collect(app))
     assert len([s for s in app.sent if "claude" in s[0].lower()]) == 1
+
+
+# ---------- финальное ревью ----------
+def test_buttons_are_idempotent(app):
+    ev = add(app, GOALS, datetime(2026, 10, 19, 11, 0, tzinfo=TZ), title="Встреча")
+    run(ritual_flows.handle(app, "ok", ev, None))
+    reply, _ = run(ritual_flows.handle(app, "ok", ev, None))
+    assert "Уже" in reply and len([t for t in app.svc.open_tasks() if t["title"] == "Встреча"]) == 1
+    reply, _ = run(ritual_flows.handle(app, "no", ev, None))
+    assert "Уже" in reply and app.rituals.feed(ev)["status"] == "accepted"
+
+
+def test_double_truant_press_costs_hp_once(app):
+    dnd(app)
+    ev = add(app, DND, datetime(2026, 10, 16, 18, 30, tzinfo=TZ))
+    run(ritual_flows.handle(app, "sb", ev, None))
+    reply, _ = run(ritual_flows.handle(app, "sb", ev, None))
+    assert app.svc.game.hero()["hp"] == 80 and "Уже" in reply
+
+
+def test_ritual_tick_failure_does_not_break_the_scheduler(app, monkeypatch):
+    def boom():
+        raise RuntimeError("битая строка")
+
+    monkeypatch.setattr(app.rituals, "new_changes", boom)
+    run(ritual_flows.tick(app, NOW, quiet=False))          # не должно бросить исключение

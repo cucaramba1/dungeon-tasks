@@ -94,6 +94,14 @@ async def send_change(app, row, now: datetime) -> None:
 
 
 async def tick(app, now: datetime, quiet: bool) -> None:
+    """Сбой в точечных чатах не должен ронять остальные шаги тикера (календарь, «Свободен?», Obsidian)."""
+    try:
+        await _tick(app, now, quiet)
+    except Exception:
+        log.exception("rituals tick failed")
+
+
+async def _tick(app, now: datetime, quiet: bool) -> None:
     """Каждый тик планировщика: применить переносы, разослать карточки. Тихие часы: в БД меняем, пишем потом."""
     if app.db.get("rituals_enabled") != "1":
         return
@@ -147,6 +155,13 @@ async def collect(app) -> dict:
 async def handle(app, act: str, row_id: int, arg: str | None) -> tuple[str, str | None]:
     """Кнопки rt:*. Возвращает (ответ, подсказка для клавиатуры или None)."""
     r, now = app.rituals, app.svc.clock()
+    row = r.feed(row_id)
+    if row is None:
+        return "Такой карточки уже нет", None
+    status = row["status"]   # второй экземпляр карточки (напоминание) или двойной тап не должны сработать повторно
+    if ((act in ("ok", "mk", "ser", "no") and status != "new") or (act in ("sk", "sb", "sg") and status not in ("new", "accepted"))
+            or (act == "pk" and status != "ambiguous")):
+        return "Уже решено", None
     if act in ("ok", "mk", "ser"):
         res = r.accept(row_id) if act == "ok" else r.make_ritual(row_id)
         if res["task_id"]:

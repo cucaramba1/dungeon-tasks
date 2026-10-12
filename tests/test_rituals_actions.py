@@ -243,3 +243,76 @@ def test_unsent_changes_and_listing(env):
     ev = add(db, GOALS, NOW + timedelta(days=1), title="Квиз", extra=json.dumps({"book": "Книга"}))
     [item] = r.listing(NOW)
     assert item["id"] == ev and item["title"] == "Квиз" and "Книга" in item["extra"] and item["status"] == "new"
+
+
+# ---------- финальное ревью: повторные нажатия, серия + неподтверждённый анонс ----------
+def test_double_accept_and_make_ritual_create_one_thing(env):
+    db, svc, r = env
+    ev = add(db, GOALS, datetime(2026, 10, 19, 11, 0, tzinfo=TZ))
+    first = r.accept(ev)
+    again = r.accept(ev)
+    assert first["task_id"] and again["task_id"] == first["task_id"] and "Уже" in again["text"]
+    assert len([t for t in svc.open_tasks() if t["title"] == "Занятие"]) == 1
+    ev2 = add(db, GOALS, datetime(2026, 10, 26, 11, 0, tzinfo=TZ))
+    r.make_ritual(ev2)
+    r.make_ritual(ev2)
+    assert len([t for t in svc.open_tasks() if t["is_habit"]]) == 1
+
+
+def test_double_skip_penalizes_once_and_keeps_next_class(env):
+    db, svc, r = env
+    t = svc.create_parsed(Parsed(title="Йога", quadrant=2, is_habit=True, due_at=datetime(2026, 10, 18, 9, 0, tzinfo=TZ),
+                                 has_time=True, rrule="FREQ=WEEKLY;BYDAY=TU,SU"), "t")
+    ev = add(db, YOGA, datetime(2026, 10, 18, 9, 0, tzinfo=TZ))
+    r.skip(ev, bad=True)                                    # воскресенье: прогул
+    r.skip(ev, bad=True)                                    # вторая карточка/напоминание с живой кнопкой
+    assert svc.game.hero()["hp"] == 80
+    nxt = [x for x in svc.open_tasks() if x["is_habit"]]    # вторник 20.10 должен остаться живым
+    assert len(nxt) == 1 and nxt[0]["id"] != t["id"] and nxt[0]["status"] == "open"
+
+
+def test_pick_target_twice_does_not_overwrite_undo(env):
+    db, svc, r = env
+    t = dnd(svc)
+    mv = add(db, DND, datetime(2026, 10, 17, 18, 30, tzinfo=TZ), kind="move", status="ambiguous")
+    r.pick_target(mv, f"t{t['id']}")
+    r.apply_change(mv)
+    r.pick_target(mv, f"t{t['id']}")                        # повторное нажатие кнопки выбора
+    assert r.feed(mv)["status"] == "applied"
+    r.undo(mv)
+    assert due(svc, t["id"]) == datetime(2026, 10, 16, 18, 30, tzinfo=TZ)
+
+
+def test_cancel_via_unconfirmed_series_announce_also_cancels_the_task(env):
+    db, svc, r = env
+    t = dnd(svc)
+    ev = add(db, DND, datetime(2026, 10, 16, 19, 0, tzinfo=TZ))            # анонс есть, «Подтвердить» не нажато
+    chat = rituals.chat_cfg(DND)
+    assert [c["ref"] for c in r.known(chat, NOW)] == [f"e{ev}"]            # слот один, а не два кандидата
+    cx = add(db, DND, datetime(2026, 10, 16, 19, 0, tzinfo=TZ), kind="cancel", ref_id=ev)
+    touched = r.apply_change(cx)
+    assert svc.get(t["id"])["status"] == "skipped" and r.feed(ev)["status"] == "cancelled" and t["id"] in touched
+    assert svc.game.hero()["hp"] == 100
+
+
+def test_move_via_unconfirmed_series_announce_also_moves_the_task(env):
+    db, svc, r = env
+    t = dnd(svc)
+    ev = add(db, DND, datetime(2026, 10, 16, 19, 0, tzinfo=TZ))
+    mv = add(db, DND, datetime(2026, 10, 17, 19, 0, tzinfo=TZ), kind="move", ref_id=ev)
+    r.apply_change(mv)
+    assert due(svc, t["id"]) == datetime(2026, 10, 17, 19, 0, tzinfo=TZ)
+    r.undo(mv)
+    assert due(svc, t["id"]) == datetime(2026, 10, 16, 18, 30, tzinfo=TZ)
+
+
+def test_recent_past_dated_card_stays_alive_old_one_expires(env):
+    db, _, r = env
+    recent = add(db, GOALS, datetime(2026, 10, 5, 11, 0, tzinfo=TZ), needs_check=2)       # created_at = NOW
+    stale = add(db, GOALS, datetime(2026, 10, 5, 12, 0, tzinfo=TZ), needs_check=1)
+    r.expire(NOW)
+    assert r.feed(recent)["status"] == "new" and r.feed(stale)["status"] == "expired"
+    assert [x["id"] for x in r.unsent_cards(NOW)] == [recent]
+    assert recent in {x["id"] for x in r.unsent_cards(NOW, within=timedelta(hours=3))}
+    r.retime(recent, datetime(2026, 10, 19, 11, 0, tzinfo=TZ), True)                       # Некит поправил дату
+    assert r.feed(recent)["needs_check"] == 0 and recent in {x["id"] for x in r.unsent_cards(NOW)}

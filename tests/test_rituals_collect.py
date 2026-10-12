@@ -271,3 +271,36 @@ def test_announces_are_ingested_before_moves_in_one_batch(env):
     [ev] = rows(db)
     [mv] = rows(db, "move")
     assert mv["status"] == "new" and mv["ref_id"] == ev["id"]
+
+
+# ---------- финальное ревью ----------
+def test_low_confidence_move_asks_instead_of_applying(env):
+    db, svc, r = env
+    t = dnd_task(svc)
+    ask = asker(item(1, kind="move", date_="2026-10-17", time_="18:30", ref=f"t{t['id']}", confidence=0.4))
+    run(r, fetcher({(DND, None): [post(1, "Переносим на субботу", "Mortemanes")]}), ask)
+    [row] = rows(db, "move")
+    assert row["status"] == "ambiguous" and r.new_changes() == []
+    assert json.loads(row["extra"])["candidates"][0]["ref"] == f"t{t['id']}"
+
+
+def test_recent_post_with_past_date_is_kept_for_checking_old_one_is_not(env):
+    db, _, r = env
+    feeds = {(GOALS, None): [post(1, user="AlinaSnezhko", date_="2026-10-12T10:00:00+00:00"),
+                             post(2, "Старый пост про встречу", "AlinaSnezhko", date_="2026-10-09T10:00:00+00:00")]}
+    run(r, fetcher(feeds), asker(item(1, date_="2026-10-05", time_="11:00"), item(2, date_="2026-10-04", time_="11:00")))
+    by = {parse_iso(x["starts_at"]).day: x for x in rows(db)}
+    assert by[5]["needs_check"] == 2 and by[4]["needs_check"] == 1
+
+
+def test_every_read_asks_for_up_to_100_messages_so_a_busy_chat_has_no_gap(env):
+    db, _, r = env
+    limits = []
+
+    async def fetch(chat_id, limit, topic_id=None):
+        limits.append((chat_id, limit))
+        return [post(7, user="AlinaSnezhko")] if chat_id == GOALS else []
+
+    run(r, fetch, asker(item(7)))
+    run(r, fetch, asker(boom=AssertionError("новых постов нет")))      # курсор стоит, второй проход идёт «по курсору»
+    assert [lim for cid, lim in limits if cid == GOALS] == [100, 100]

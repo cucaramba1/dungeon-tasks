@@ -57,3 +57,15 @@ def test_afisha_skips_targeted_chats(monkeypatch):
 
     asyncio.run(Events(DB(":memory:")).collect(TZ, fetch=fetch, pause=0))
     assert asked == [1]
+
+
+def test_afisha_cleanup_keeps_ritual_rows(monkeypatch):
+    import asyncio
+    monkeypatch.setattr(events_mod, "cfg", lambda: {"channels": [], "targeted": [], "categories": {}, "exclude": []})
+    db = DB(":memory:")
+    old = datetime.now(TZ) - timedelta(days=30)
+    for key, kind in (("old-afisha", "afisha"), ("old-ritual", "announce")):
+        db.x("INSERT INTO events_feed(key, starts_at, title, kind, created_at) VALUES(?,?,?,?,?)",
+             (key, iso(old), key, kind, iso(old)))
+    asyncio.run(Events(db).collect(TZ, fetch=None, pause=0))
+    assert [r["key"] for r in db.q("SELECT key FROM events_feed")] == ["old-ritual"]   # llm_raw и undo не теряем

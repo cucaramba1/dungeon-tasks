@@ -206,7 +206,7 @@ class Events:
             if posts:
                 self.db.set(f"ev_last:{ch['id']}", max(p.get("id", 0) for p in posts))
             await asyncio.sleep(pause)  # не душим telegram-mcp
-        self.db.x("DELETE FROM events_feed WHERE starts_at<?", (iso(utcnow() - timedelta(days=14)),))
+        self.db.x("DELETE FROM events_feed WHERE kind='afisha' AND starts_at<?", (iso(utcnow() - timedelta(days=14)),))
         return stats
 
     # --- отбор ---

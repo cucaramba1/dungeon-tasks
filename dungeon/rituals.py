@@ -91,7 +91,9 @@ class Rituals:
         out = [{"ref": f"e{r['id']}", "title": r["title"], "date": fmt(r["starts_at"])} for r in rows]
         t = self.occurrence_task(chat)
         if t and t["id"] not in {r["task_id"] for r in rows}:
-            out.append({"ref": f"t{t['id']}", "title": t["title"], "date": fmt(t["due_at"])})
+            due = parse_iso(t["due_at"])
+            if not any(abs(parse_iso(r["starts_at"]) - due) <= timedelta(days=3) for r in rows):  # слот уже представлен анонсом
+                out.append({"ref": f"t{t['id']}", "title": t["title"], "date": fmt(t["due_at"])})
         return out
 
     # ---------- сбор ----------
@@ -110,7 +112,9 @@ class Rituals:
                 for topic, label in sources(chat):
                     key = self._last_key(chat["id"], topic)
                     last = int(self.db.get(key, "0") or 0)
-                    posts = await fetch(chat["id"], 30 if last else 100, topic)
+                    posts = await fetch(chat["id"], 100, topic)  # 100 = весь кэш telegram-mcp: плотный чат не теряет посты между опросами
+                    if last and len(posts) >= 100 and min(p.get("id", 0) for p in posts) > last:
+                        log.warning("rituals: %s: между опросами больше 100 сообщений, часть могла пропасть", chat["name"])
                     marks[key] = max([p.get("id", 0) for p in posts] + [last])
                     floor = None if last else now - timedelta(days=FIRST_RUN_DAYS)
                     fresh += [(p, label) for p in posts if p.get("id", 0) > last and usable(chat, p, floor)]
@@ -193,10 +197,14 @@ class Rituals:
             return 0
         extra = {k: v for k, v in {"book": it.book, "place": it.place, "description": it.description,
                                    "variant": label}.items() if v}
+        check = int(it.needs_check)
+        if (it.kind == "announce" and it.needs_check and it.start and it.start < now
+                and now - datetime.fromisoformat(post["date"]) <= timedelta(hours=24)):
+            check = 2  # свежий пост с датой в прошлом: скорее всего LLM ошиблась, покажем с пометкой «проверь»
         base = {"key": key, "chat_id": chat["id"], "channel": chat["name"], "msg_id": post["id"],
                 "link": chat_link(chat, post["id"]), "title": it.title[:120], "text": (post.get("text") or "")[:700],
                 "author": post.get("username"), "ritual": chat["name"], "kind": it.kind,
-                "llm_raw": json.dumps(it.raw, ensure_ascii=False), "needs_check": int(it.needs_check)}
+                "llm_raw": json.dumps(it.raw, ensure_ascii=False), "needs_check": check}
         if it.kind == "announce":
             if self._same_day_duplicate(chat, it, extra):
                 return 0  # автор поправил или повторил анонс
@@ -205,6 +213,8 @@ class Rituals:
             return 1
         ref_id, ref_task, cands = self.find_target(chat, it, now)
         status = "new" if (ref_id or ref_task) else ("ambiguous" if cands else "unresolved")
+        if status == "new" and it.needs_check:
+            status = "ambiguous"  # модель не уверена или дата в прошлом: сначала спросим, потом применим
         day = self._change_day(it)
         if status == "unresolved" and day and day < now.date():
             return 0  # про прошлое Некита не будим
@@ -269,6 +279,9 @@ class Rituals:
 
     def pick_target(self, row_id: int, ref: str) -> None:
         """Некит выбрал кнопкой, какое событие переносили: теперь изменение можно применить."""
+        row = self.feed(row_id)
+        if not row or row["status"] != "ambiguous":
+            return  # повторное нажатие или уже применено
         if ref[0] == "e":
             self.db.x("UPDATE events_feed SET ref_id=?, status='new', notified_at=NULL WHERE id=?", (int(ref[1:]), row_id))
         else:
@@ -280,7 +293,11 @@ class Rituals:
         row = self.feed(row_id)
         new = parse_iso(row["starts_at"]).astimezone(self.tz)
         ev = self.feed(row["ref_id"]) if row["ref_id"] else None
-        t = self.svc.get(ev["task_id"] if ev else row["ref_task"]) if (ev or row["ref_task"]) else None
+        if ev:
+            t = self.svc.get(ev["task_id"]) if ev["task_id"] else self.occurrence_near(
+                chat_cfg(ev["chat_id"]) or {}, parse_iso(ev["starts_at"]).astimezone(self.tz))
+        else:
+            t = self.svc.get(row["ref_task"]) if row["ref_task"] else None
         if t and t["status"] != "open":
             t = None
         undo: dict = {"title": ev["title"] if ev else (t["title"] if t else row["title"])}
@@ -352,6 +369,8 @@ class Rituals:
     def accept(self, event_id: int) -> dict:
         """«Иду» / «Подтвердить»: занятие серии подтверждается, обычное событие становится разовой задачей."""
         ev = self.feed(event_id)
+        if ev["status"] != "new":
+            return {"task_id": ev["task_id"], "title": ev["title"], "text": "Уже решено"}
         chat = chat_cfg(ev["chat_id"]) or {}
         start = parse_iso(ev["starts_at"]).astimezone(self.tz)
         t = self.occurrence_near(chat, start)
@@ -382,6 +401,8 @@ class Rituals:
     def make_ritual(self, event_id: int) -> dict:
         """«В ритуал» (или «Завести ритуал» для йоги): серия на каждую неделю с этого анонса."""
         ev = self.feed(event_id)
+        if ev["status"] != "new":
+            return {"task_id": ev["task_id"], "title": ev["title"], "text": "Уже решено"}
         chat = chat_cfg(ev["chat_id"]) or {}
         start = parse_iso(ev["starts_at"]).astimezone(self.tz)
         byday = ",".join(chat["attend_days"]) if chat.get("attend_days") else DAYS[start.weekday()]
@@ -394,11 +415,13 @@ class Rituals:
         return {"task_id": t["id"], "title": title, "text": f"🕯 Завёл ритуал: {title}"}
 
     def decline(self, event_id: int) -> None:
-        self.db.x("UPDATE events_feed SET status='declined' WHERE id=?", (event_id,))
+        self.db.x("UPDATE events_feed SET status='declined' WHERE id=? AND status='new'", (event_id,))
 
     def skip(self, event_id: int, bad: bool) -> tuple[list[str], list[int]]:
         """Некит пропускает занятие. Прогул (bad) штрафуется, важная причина нет. Разовая задача просто удаляется."""
         ev = self.feed(event_id)
+        if ev["status"] not in ("new", "accepted"):
+            return [], []  # уже решено: повторное нажатие не штрафует второй раз и не трогает следующее занятие
         chat = chat_cfg(ev["chat_id"]) or {}
         t = self.svc.get(ev["task_id"]) if ev["task_id"] else None
         if t is None:
@@ -427,10 +450,12 @@ class Rituals:
             self.svc.set_due(t["id"], due, has_time)
 
     # ---------- очереди рассылки ----------
-    _ALIVE = "((has_time=1 AND starts_at>=:now) OR (has_time=0 AND starts_at>=:day))"
+    _ALIVE = ("((has_time=1 AND starts_at>=:now) OR (has_time=0 AND starts_at>=:day)"
+              " OR (needs_check=2 AND created_at>=:recent))")
 
     def _times(self, now: datetime) -> dict:
-        return {"now": iso(now), "day": iso(now.replace(hour=0, minute=0, second=0, microsecond=0))}
+        return {"now": iso(now), "day": iso(now.replace(hour=0, minute=0, second=0, microsecond=0)),
+                "recent": iso(now - timedelta(hours=24))}
 
     def unsent_changes(self) -> list:
         return self.db.q("SELECT * FROM events_feed WHERE kind IN ('move','cancel') AND notified_at IS NULL "
@@ -460,7 +485,8 @@ class Rituals:
     def expire(self, now: datetime) -> None:
         """Анонс, который уже начался (или день прошёл), гаснет сам."""
         self.db.x("UPDATE events_feed SET status='expired' WHERE kind='announce' AND status='new' AND "
-                  "((has_time=1 AND starts_at<:now) OR (has_time=0 AND starts_at<:day))", self._times(now))
+                  "((has_time=1 AND starts_at<:now) OR (has_time=0 AND starts_at<:day)) "
+                  "AND NOT (needs_check=2 AND created_at>=:recent)", self._times(now))
 
     def digest_slots(self) -> list[time]:
         return [hm(s.strip()) for s in (self.db.get("ritual_digest") or "").split(",") if s.strip()]
