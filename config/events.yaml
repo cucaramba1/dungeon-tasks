@@ -72,3 +72,32 @@ exclude:
   - маникюр
   - виза
   - обмен валют
+
+# Точечные чаты: ритуалы и события от конкретных людей. Читает rituals.py, разбор через claude -p.
+# authors: username без @; channel: true = канал пишет от своего имени, берём все посты.
+# series: имя ритуала-серии в боте (D&D, йога). attend_days: на какие дни недели ходит Некит (остальные игнорируем).
+# until: после этой даты анонсы игнорируются. topics: форум, {id топика: подпись}.
+# fields: справочное поле (что важно вытащить из анонса). Книгу, место и описание LLM достаёт сам по инструкции.
+targeted:
+  - {id: -1003493020432, name: "Контент", authors: [vasileria]}
+  - {id: -1003626669139, name: "Общество мёртвых читателей", authors: [dekobrina], fields: [book]}
+  - id: -1003116878132
+    name: "Волейбол"
+    username: volley_nhatrang
+    authors: [alex_viuk]
+    topics: {3: outdoor, 132: indoor}
+  - {id: -1003969606547, name: "Библиотерапия", authors: [AlinaSnezhko], fields: [book]}
+  - {id: -1004426706927, name: "Цели и привычки", authors: [AlinaSnezhko], fields: [book]}
+  - {id: -1001595490870, name: "Лекции по искусству", username: morethanart, channel: true}
+  - {id: -1002188099155, name: "Покер", username: pokerdaiviet, channel: true}
+  - id: -1003952363073
+    name: "D&D"
+    authors: [VladimirGoanskiy, Mortemanes]
+    series: "Настольная игра Dungeons & Dragons"
+  - {id: -1002093016263, name: "Настолки Neverland", username: NeverlandCommunity, authors: [Mortemanes]}
+  - id: -1004482307437
+    name: "Йога FYSM"
+    authors: [Panushkinn]
+    series: "Йога"
+    attend_days: [TU, SU]
+    until: 2026-10-31

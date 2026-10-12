@@ -217,3 +217,57 @@ def test_friday_yoga_cancel_is_ignored(env):
     run(r, fetcher({(YOGA, None): [post(1, "В пятницу занятия не будет")]}),
         asker(item(1, kind="cancel", date_="2026-10-16", time_=None)))
     assert rows(db, "cancel") == []
+
+
+def test_cancel_with_explicit_date_matching_nothing_is_unresolved_not_ambiguous(env):
+    db, _, r = env
+    run(r, fetcher({(GOALS, None): [post(1, user="AlinaSnezhko")]}), asker(item(1, date_="2026-10-19", time_="11:00")))
+    run(r, fetcher({(GOALS, None): [post(2, "Встречи 21 октября не будет", "AlinaSnezhko")]}),
+        asker(item(2, kind="cancel", date_="2026-10-21", time_=None)))
+    [row] = rows(db, "cancel")
+    assert row["status"] == "unresolved"                       # кандидат на 19.10 к этой отмене не относится
+    assert "candidates" not in json.loads(row["extra"])
+
+
+def test_unresolved_change_about_a_past_date_is_dropped(env):
+    db, _, r = env
+    run(r, fetcher({(GOALS, None): [post(1, "Встречи вчера не было", "AlinaSnezhko")]}),
+        asker(item(1, kind="cancel", date_="2026-10-05", time_=None)))
+    assert rows(db, "cancel") == []                            # про прошлое не будим Некита
+
+
+def test_date_only_announce_is_skipped_when_a_timed_one_exists_that_day(env):
+    db, _, r = env
+    run(r, fetcher({(GOALS, None): [post(1, user="AlinaSnezhko")]}), asker(item(1, date_="2026-10-19", time_="11:00")))
+    run(r, fetcher({(GOALS, None): [post(2, "Напоминаю про встречу", "AlinaSnezhko")]}),
+        asker(item(2, date_="2026-10-19", time_=None)))
+    assert len(rows(db)) == 1 and rows(db)[0]["has_time"] == 1
+
+
+def test_timed_announce_upgrades_an_existing_date_only_row(env):
+    db, _, r = env
+    run(r, fetcher({(GOALS, None): [post(1, user="AlinaSnezhko")]}),
+        asker({**item(1, date_="2026-10-19", time_=None), "title": "Расписание лекций"}))
+    run(r, fetcher({(GOALS, None): [post(2, "Лекция в понедельник", "AlinaSnezhko")]}),
+        asker({**item(2, date_="2026-10-19", time_="19:00"), "title": "Лекция «Барокко»"}))
+    [row] = rows(db)
+    assert row["has_time"] == 1 and row["title"] == "Лекция «Барокко»"
+    assert parse_iso(row["starts_at"]).astimezone(TZ).hour == 19
+
+
+def test_two_timed_announces_on_one_day_both_stay(env):
+    db, _, r = env
+    feeds = {(GOALS, None): [post(1, user="AlinaSnezhko"), post(2, "Вечерняя игра сегодня", "AlinaSnezhko")]}
+    run(r, fetcher(feeds), asker(item(1, date_="2026-10-19", time_="14:00"), item(2, date_="2026-10-19", time_="19:00")))
+    assert len(rows(db)) == 2
+
+
+def test_announces_are_ingested_before_moves_in_one_batch(env):
+    db, _, r = env
+    feeds = {(GOALS, None): [post(1, user="AlinaSnezhko"), post(2, "Встречу переносим", "AlinaSnezhko")]}
+    ask = asker(item(2, kind="move", date_="2026-10-22", time_="11:00", orig_date="2026-10-20"),   # LLM назвал перенос первым
+                item(1, date_="2026-10-20", time_="11:00"))
+    run(r, fetcher(feeds), ask)
+    [ev] = rows(db)
+    [mv] = rows(db, "move")
+    assert mv["status"] == "new" and mv["ref_id"] == ev["id"]

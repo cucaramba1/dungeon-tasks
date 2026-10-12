@@ -134,7 +134,8 @@ class Rituals:
                     log.warning("rituals: claude не разобрал %s: %s", chat["name"], str(e)[:200])
                     continue
                 by_id = {p["id"]: (p, label) for p, label in fresh}
-                for it in items:
+                # сначала анонсы, потом переносы и отмены: им нужны уже известные события
+                for it in sorted(items, key=lambda i: (i.kind != "announce", i.msg_id)):
                     if it.msg_id in by_id:
                         stats["items"] += self.ingest(chat, *by_id[it.msg_id], it, now)
             for key, mark in marks.items():
@@ -160,21 +161,25 @@ class Rituals:
             return False
         return True
 
+    def _change_day(self, it) -> date | None:
+        """О какой дате речь в переносе или отмене (старая дата, а для отмены ещё и названная)."""
+        return it.orig_date or (it.start.date() if it.kind == "cancel" and it.start else None)
+
     def find_target(self, chat: dict, it, now: datetime):
-        """Какое известное событие двигают или отменяют. Возвращает (ref_id, ref_task, кандидаты)."""
+        """Какое известное событие двигают или отменяют. Возвращает (ref_id, ref_task, подходящие кандидаты)."""
         cands = self.known(chat, now)
         by_ref = {c["ref"]: c for c in cands}
-        pick = None
+        pick, pool = None, cands
         if it.ref in by_ref:
             pick = it.ref
         else:
-            day = it.orig_date or (it.start.date() if it.kind == "cancel" and it.start else None)
+            day = self._change_day(it)
             pool = [c for c in cands if c["date"][:10] == day.isoformat()] if day else cands
             if len(pool) == 1:
                 pick = pool[0]["ref"]
         if not pick:
-            return None, None, cands
-        return (int(pick[1:]), None, cands) if pick[0] == "e" else (None, int(pick[1:]), cands)
+            return None, None, pool  # названная дата ничему не соответствует: кандидатов нет, это не «неоднозначно»
+        return (int(pick[1:]), None, pool) if pick[0] == "e" else (None, int(pick[1:]), pool)
 
     def _insert(self, base: dict, **cols) -> int:
         data = {**base, **cols, "created_at": iso(utcnow())}
@@ -193,20 +198,39 @@ class Rituals:
                 "author": post.get("username"), "ritual": chat["name"], "kind": it.kind,
                 "llm_raw": json.dumps(it.raw, ensure_ascii=False), "needs_check": int(it.needs_check)}
         if it.kind == "announce":
-            if self.db.one("SELECT 1 FROM events_feed WHERE chat_id=? AND kind='announce' AND starts_at=? "
-                           "AND status NOT IN ('declined','expired')", (chat["id"], iso(it.start))):
+            if self._same_day_duplicate(chat, it, extra):
                 return 0  # автор поправил или повторил анонс
             self._insert(base, extra=json.dumps(extra, ensure_ascii=False), status="new",
                          starts_at=iso(it.start), has_time=int(it.has_time))
             return 1
         ref_id, ref_task, cands = self.find_target(chat, it, now)
         status = "new" if (ref_id or ref_task) else ("ambiguous" if cands else "unresolved")
+        day = self._change_day(it)
+        if status == "unresolved" and day and day < now.date():
+            return 0  # про прошлое Некита не будим
         if status == "ambiguous":
             extra["candidates"] = cands
         start = it.start or self._target_start(ref_id, ref_task) or datetime.fromisoformat(post["date"])
         self._insert(base, extra=json.dumps(extra, ensure_ascii=False), status=status, starts_at=iso(start),
                      has_time=int(it.has_time), ref_id=ref_id, ref_task=ref_task)
         return 1
+
+    def _same_day_duplicate(self, chat: dict, it, extra: dict) -> bool:
+        """Повтор анонса: тот же старт, напоминание без времени при уже известном времени, либо время уточнило
+        запись без времени (тогда обновляем её, а не заводим вторую карточку)."""
+        day = datetime.combine(it.start.date(), time(0, 0), it.start.tzinfo)
+        same = self.db.q("SELECT * FROM events_feed WHERE chat_id=? AND kind='announce' AND starts_at>=? AND starts_at<? "
+                         "AND status NOT IN ('declined','expired','cancelled')",
+                         (chat["id"], iso(day), iso(day + timedelta(days=1))))
+        if any(r["starts_at"] == iso(it.start) for r in same) or (not it.has_time and same):
+            return True
+        date_only = next((r for r in same if not r["has_time"]), None)
+        if it.has_time and date_only:
+            merged = {**json.loads(date_only["extra"] or "{}"), **extra}
+            self.db.x("UPDATE events_feed SET starts_at=?, has_time=1, title=?, extra=? WHERE id=?",
+                      (iso(it.start), it.title[:120], json.dumps(merged, ensure_ascii=False), date_only["id"]))
+            return True
+        return False
 
     def _target_start(self, ref_id: int | None, ref_task: int | None) -> datetime | None:
         if ref_id and (e := self.feed(ref_id)):
