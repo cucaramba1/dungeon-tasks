@@ -14,6 +14,7 @@ from .events import Events
 from .insurance import Insurance
 from .leisure import Leisure
 from .planner import Planner
+from .rituals import Rituals
 from .services import Service
 
 log = logging.getLogger(__name__)
@@ -25,6 +26,8 @@ class App:
         self.svc = Service(self.db)
         self.ins = Insurance(self.db)
         self.events = Events(self.db)
+        self.rituals = Rituals(self.db, self.svc)
+        self.rituals_running = False
         self.leisure = Leisure(self.db)
         self.planner = Planner(self.svc, self.events)
         self.plan_busy = False           # Claude думает над шагом, повторные нажатия игнорируем

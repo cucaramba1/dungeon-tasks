@@ -18,6 +18,7 @@ from . import (
     leisure,
     mac,
     obsidian,
+    ritual_flows,
     texts,
 )
 from .app import App
@@ -149,6 +150,14 @@ async def tick(app: App) -> None:
     if not app.events_running and (not last or now - datetime.fromisoformat(last) >= every):
         db.set("ev_last_run", now.isoformat())
         app.spawn(flows.collect_events(app))
+
+    # 9.5 точечные чаты: раз в час читаем (фоном), каждый тик применяем переносы и шлём карточки
+    if db.get("rituals_enabled") == "1":
+        last = db.get("rt_last_run")
+        if not app.rituals_running and (not last or now - datetime.fromisoformat(last) >= every):
+            db.set("rt_last_run", now.isoformat())
+            app.spawn(ritual_flows.collect(app))
+        await ritual_flows.tick(app, now, quiet=in_quiet(now, db.get("quiet_from"), db.get("quiet_to")))
 
     # 10. «Свободен сейчас?»
     if not app.planner.active() and leisure.should_ask(db, svc.open_tasks(), now, bool(svc.focus_current())):

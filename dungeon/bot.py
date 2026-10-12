@@ -12,7 +12,7 @@ from aiogram import BaseMiddleware, F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import BotCommand, CallbackQuery, Message
 
-from . import flows, keyboards, leisure, stt, texts
+from . import flows, keyboards, leisure, ritual_flows, stt, texts
 from .app import App
 
 log = logging.getLogger(__name__)
@@ -419,6 +419,22 @@ def build(app: App) -> Router:
         await c.message.edit_reply_markup(reply_markup=None)
         await c.answer("Учту 👍" if act == "up" else "Учту, такое реже")
 
+    @r.callback_query(F.data.regexp(r"^rt:[a-z]+:\d+(:[et]\d+)?$"))
+    async def ritual_cb(c: CallbackQuery):
+        parts = c.data.split(":")
+        act, rid, arg = parts[1], int(parts[2]), parts[3] if len(parts) > 3 else None
+        reply, kind = await ritual_flows.handle(app, act, rid, arg)
+        if kind == "reason":
+            await c.message.edit_reply_markup(reply_markup=None)
+            await c.message.answer(reply, reply_markup=keyboards.ritual_reason(rid, int(app.db.get("skip_penalty_hp"))))
+            await c.answer()
+            return
+        if act != "fix":
+            await c.message.edit_reply_markup(reply_markup=None)
+        await c.answer(reply[:190])
+        if act != "no":
+            await c.message.answer(reply)
+
     @r.callback_query(F.data.regexp(r"^ls:(w|s|n):\d+$"))
     async def leisure_cb(c: CallbackQuery):
         _, act, rid = c.data.split(":")
@@ -449,6 +465,9 @@ async def handle_text(app: App, m: Message, text: str, source: str) -> None:
                        "<i>Пока идёт планирование, сообщения не становятся задачами. Выйти: /cancel</i>")
         return
     reply = m.reply_to_message
+    if reply and reply.from_user and reply.from_user.is_bot and (mr := re.search(r"\[a(\d+)\]", reply.text or "")):
+        await m.answer(await ritual_flows.retime_from_reply(app, int(mr.group(1)), text))
+        return
     if reply and reply.from_user and reply.from_user.is_bot and (mt := re.search(r"#(\d+)", reply.text or "")):
         tid = int(mt.group(1))
         if app.svc.get(tid):

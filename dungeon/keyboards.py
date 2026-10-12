@@ -134,3 +134,45 @@ def leisure(rid: int, kind: str) -> InlineKeyboardMarkup:
     b.button(text="🔄 Другое", callback_data=f"ls:n:{rid}")
     b.adjust(3)
     return b.as_markup()
+
+
+def ritual_card(row_id: int, url: str | None, mode: str) -> InlineKeyboardMarkup:
+    """Карточка анонса из точечного чата. mode: plain (обычное событие), occ (серия есть), new_series (серии ещё нет)."""
+    b = InlineKeyboardBuilder()
+    if url:
+        b.button(text="📖 Пост", url=url)
+    if mode == "occ":
+        b.button(text="✅ Подтвердить", callback_data=f"rt:ok:{row_id}")
+        b.button(text="❌ Пропускаю", callback_data=f"rt:sk:{row_id}")
+    elif mode == "new_series":
+        b.button(text="🕯 Завести ритуал", callback_data=f"rt:ser:{row_id}")
+        b.button(text="❌ Мимо", callback_data=f"rt:no:{row_id}")
+    else:
+        b.button(text="✅ Иду", callback_data=f"rt:ok:{row_id}")
+        b.button(text="🕯 В ритуал", callback_data=f"rt:mk:{row_id}")
+        b.button(text="❌ Мимо", callback_data=f"rt:no:{row_id}")
+    b.button(text="✏ Поправить", callback_data=f"rt:fix:{row_id}")
+    b.adjust(*([1] if url else []), *([2, 2] if mode == "plain" else [2, 1]))
+    return b.as_markup()
+
+
+def ritual_reason(row_id: int, penalty: int) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text=f"🚫 Прогул (−{penalty} HP)", callback_data=f"rt:sb:{row_id}")
+    b.button(text="📌 Важная причина", callback_data=f"rt:sg:{row_id}")
+    b.adjust(1, 1)
+    return b.as_markup()
+
+
+def ritual_undo(row_id: int) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="↩ Вернуть", callback_data=f"rt:un:{row_id}")
+    return b.as_markup()
+
+
+def ritual_pick(row_id: int, cands: list[dict]) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    for c in cands[:4]:
+        b.button(text=f"{c['title'][:24]} {c['date'][8:10]}.{c['date'][5:7]}", callback_data=f"rt:pk:{row_id}:{c['ref']}")
+    b.adjust(1)
+    return b.as_markup()
