@@ -25,6 +25,7 @@ def test_special_rules():
     yoga = chats[-1004482307437]
     assert yoga["series"] == "Йога" and yoga["attend_days"] == ["TU", "SU"] and rituals.as_date(yoga["until"]) == date(2026, 10, 31)
     dnd = chats[-1003952363073]
+    assert dnd["keep_time"] is True
     assert dnd["series"] == "Настольная игра Dungeons & Dragons" and set(dnd["authors"]) == {"VladimirGoanskiy", "Mortemanes"}
     assert chats[-1003626669139]["fields"] == ["book"] and chats[-1003969606547]["fields"] == ["book"]
     assert chats[-1002188099155]["channel"] and chats[-1001595490870]["channel"]

@@ -16,7 +16,8 @@ YOGA, DND, GOALS = -1, -2, -3
 CHATS = [
     {"id": YOGA, "name": "Йога FYSM", "authors": ["Panushkinn"], "series": "Йога",
      "until": date(2026, 10, 31), "attend_days": ["TU", "SU"]},
-    {"id": DND, "name": "Днд неверленд", "authors": ["Mortemanes"], "series": "Настольная игра Dungeons & Dragons"},
+    {"id": DND, "name": "Днд неверленд", "authors": ["Mortemanes"], "series": "Настольная игра Dungeons & Dragons",
+     "keep_time": True},
     {"id": GOALS, "name": "Цели и привычки", "authors": ["AlinaSnezhko"]},
 ]
 
@@ -120,12 +121,12 @@ def test_pick_target_resolves_ambiguous_row(env):
 
 
 # ---------- решения Некита ----------
-def test_accept_confirms_series_occurrence_and_changes_its_time(env):
+def test_accept_confirms_series_occurrence_and_keeps_its_time(env):
     db, svc, r = env
     t = dnd(svc)
-    ev = add(db, DND, datetime(2026, 10, 16, 19, 0, tzinfo=TZ))
+    ev = add(db, DND, datetime(2026, 10, 16, 19, 0, tzinfo=TZ))        # в чате пишут «в 19:00», у Некита 18:30
     res = r.accept(ev)
-    assert res["task_id"] == t["id"] and due(svc, t["id"]).hour == 19
+    assert res["task_id"] == t["id"] and due(svc, t["id"]) == datetime(2026, 10, 16, 18, 30, tzinfo=TZ)
     assert r.feed(ev)["status"] == "accepted" and "https://t.me/x/1" in svc.get(t["id"])["notes"]
 
 

@@ -375,7 +375,9 @@ class Rituals:
         start = parse_iso(ev["starts_at"]).astimezone(self.tz)
         t = self.occurrence_near(chat, start)
         if t:
-            when, has = self._merge_time(start, bool(ev["has_time"]), bool(t["has_time"]), t["due_at"])
+            # keep_time: время занятия у Некита своё (D&D 18:30, в чате «начало в 19:00»), подтверждаем только день
+            has_time = bool(ev["has_time"]) and not chat.get("keep_time")
+            when, has = self._merge_time(start, has_time, bool(t["has_time"]), t["due_at"])
             if parse_iso(t["due_at"]).astimezone(self.tz) != when:
                 self.svc.set_due(t["id"], when, has)
             text = f"Подтвердил: {t['title']}"

@@ -94,6 +94,7 @@ targeted:
     name: "D&D"
     authors: [VladimirGoanskiy, Mortemanes]
     series: "Настольная игра Dungeons & Dragons"
+    keep_time: true   # подтверждение не меняет время записи (у Некита 18:30, в чате пишут начало в 19:00)
   - {id: -1002093016263, name: "Настолки Neverland", username: NeverlandCommunity, authors: [Mortemanes]}
   - id: -1004482307437
     name: "Йога FYSM"
