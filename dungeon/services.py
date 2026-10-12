@@ -198,6 +198,22 @@ class Service:
         self.db.x("UPDATE tasks SET status='skipped' WHERE id=?", (tid,))
         return self._spawn_next(t)
 
+    def skip_missed(self, tid: int):
+        """Прогул ритуала по решению Некита: штраф skip_penalty_hp, стрик в ноль, серия идёт дальше."""
+        t = self.get(tid)
+        if not t or t["status"] != "open":
+            return [], None
+        self.db.x("UPDATE tasks SET status='missed' WHERE id=?", (tid,))
+        msgs = self.game.miss_habit(t, hp=int(self.db.get("skip_penalty_hp")))
+        return msgs, self._spawn_next(t)
+
+    def reopen(self, tid: int):
+        """Вернуть снятую задачу в открытые (отмена отмены)."""
+        self.db.x("UPDATE tasks SET status='open' WHERE id=?", (tid,))
+        self._reschedule(tid)
+        self._queue_calendar(tid, "upsert")
+        return self.get(tid)
+
     def delete(self, tid: int) -> list[str]:
         t = self.get(tid)
         if not t:

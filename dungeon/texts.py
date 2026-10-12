@@ -39,7 +39,8 @@ def human_rrule(r: str | None) -> str:
     if "INTERVAL=" in r:
         return f"каждые {r.split('INTERVAL=')[1]} дн."
     if "BYDAY=" in r:
-        return "по " + ", ".join(RU_DAYS[d] for d in r.split("BYDAY=")[1].split(","))
+        days = r.split("BYDAY=")[1].split(";")[0].split(",")
+        return "по " + ", ".join(RU_DAYS[d] for d in days)
     return r
 
 

@@ -147,11 +147,11 @@ class Game:
         msgs += self.check_achievements()
         return xp, msgs
 
-    def miss_habit(self, task) -> list[str]:
+    def miss_habit(self, task, hp: int | None = None) -> list[str]:
         sid = task["series_id"] or task["id"]
         self.db.x("UPDATE streaks SET current=0 WHERE series_id=?", (sid,))
         self._event("missed", task["id"], task["quadrant"])
-        return self._add(hp=-HABIT_MISS_HP)
+        return self._add(hp=-(HABIT_MISS_HP if hp is None else hp))
 
     def deleted(self, task) -> list[str]:
         if task["quadrant"] == 4:

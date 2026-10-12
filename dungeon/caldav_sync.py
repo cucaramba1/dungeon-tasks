@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
 import caldav
@@ -50,6 +50,8 @@ def _rrule_dict(rrule: str) -> dict:
             out[key] = int(val)
         elif key == "BYDAY":
             out[key] = val.split(",")
+        elif key == "UNTIL":
+            out[key] = datetime.strptime(val, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
         else:
             out[key] = val
     return out
