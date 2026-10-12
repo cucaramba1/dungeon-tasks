@@ -196,3 +196,6 @@ h2 .hint { font: 12px -apple-system, sans-serif; text-transform: none; letter-sp
 }
 @keyframes up { from { transform: translateY(10px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+.check.on { background: var(--gold); border-color: var(--gold); }
+.rt-link { color: var(--muted); text-decoration: underline; }

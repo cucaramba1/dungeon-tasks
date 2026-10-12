@@ -45,7 +45,7 @@ function render() {
   const badge = $("#inboxBadge");
   badge.hidden = !S.inbox.length;
   badge.textContent = S.inbox.length;
-  ({ today: renderToday, map: renderMap, inbox: renderInbox, raid: renderRaid, hero: renderHeroTab })[tab]();
+  ({ today: renderToday, map: renderMap, inbox: renderInbox, raid: renderRaid, rituals: renderRituals, hero: renderHeroTab })[tab]();
 }
 
 function renderHero() {
@@ -148,6 +148,20 @@ function renderInbox() {
     </div>`).join("");
   $("#v-inbox").innerHTML = `<h2>📥 Сундук у входа <span class="hint">раскидай по зонам</span></h2>
     ${rows ? `<div class="list">${rows}</div>` : '<div class="empty">Пусто. Чистота как в эльфийском храме ✨</div>'}`;
+}
+
+function renderRituals() {
+  const rows = (S.rituals || []).map((r) => `
+    <div class="task" data-id="rt${r.id}">
+      <button class="check ${r.status === "accepted" ? "on" : ""}" data-rt="${r.id}" ${r.status === "accepted" ? "disabled" : ""} aria-label="Записаться"></button>
+      <div class="body">
+        <div class="title">${esc(r.title)}${r.needs_check ? " ❓" : ""}</div>
+        <div class="meta"><span>${esc(r.when)}</span><span>${esc(r.ritual)}</span>${r.extra ? `<span>${esc(r.extra)}</span>` : ""}
+          <a class="rt-link" href="${esc(r.link)}" target="_blank" rel="noopener">пост</a></div>
+      </div>
+    </div>`).join("");
+  $("#v-rituals").innerHTML = `<h2>🎭 Афиша <span class="hint">анонсы из твоих чатов</span></h2>
+    ${rows ? `<div class="list">${rows}</div>` : '<div class="empty">Пока анонсов нет</div>'}`;
 }
 
 function renderRaid() {
@@ -343,10 +357,11 @@ document.addEventListener("click", async (e) => {
     if (r.msgs?.length) return load();
     return renderToday();
   }
-  const el = e.target.closest("[data-done],[data-open],[data-set],[data-tab],[data-sq],[data-act],[data-buy],#raidStart,#raidStop,#backdrop");
+  const el = e.target.closest("[data-done],[data-open],[data-set],[data-tab],[data-sq],[data-act],[data-buy],[data-rt],#raidStart,#raidStop,#backdrop");
   if (!el) return;
   if (el.dataset.done) return done(+el.dataset.done);
   if (el.dataset.open) return openSheet(+el.dataset.open);
+  if (el.dataset.rt) { const r = await post(`/api/rituals/${el.dataset.rt}/accept`); toast(r.say, 3500); return load(); }
   if (el.dataset.set) {
     await api(`/api/tasks/${el.dataset.set}`, { method: "PATCH", body: JSON.stringify({ quadrant: +el.dataset.q }) });
     return load();

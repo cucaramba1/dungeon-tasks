@@ -81,7 +81,18 @@ def create_app(app: App) -> FastAPI:
             "zones": {str(k): v for k, v in ZONES.items() if k},
             "checklists": {k: svc.checklist_state(k) for k in ("morning", "evening")},
             "evening_at": app.db.get("evening"),
+            "rituals": app.rituals.listing(now),
         }
+
+    @api.post("/api/rituals/{eid}/accept", dependencies=[Depends(auth)])
+    async def ritual_accept(eid: int):
+        row = app.rituals.feed(eid)
+        if not row or row["kind"] != "announce":
+            raise HTTPException(404, "нет такого анонса")
+        res = app.rituals.accept(eid)
+        if res["task_id"]:
+            await app.changed(res["task_id"])
+        return {"say": res["text"]}
 
     # ---------- создание ----------
     @api.post("/api/tasks", dependencies=[Depends(auth)])
