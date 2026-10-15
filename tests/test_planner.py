@@ -155,3 +155,13 @@ def test_stale_session_expires(env):
     pl.db.x("UPDATE plan_sessions SET updated_at='2026-09-20T00:00:00+00:00' WHERE id=?", (s["id"],))
     assert pl.expire_stale()["status"] == "cancelled"
     assert pl.active() is None
+
+
+def test_load_verdict_70_30():
+    from dungeon.offline import load_verdict
+    assert load_verdict(14, 20).startswith("Влезает")  # ровно 70%
+    assert load_verdict(14.1, 20).startswith("Впритык")
+    assert load_verdict(20, 20).startswith("Впритык")
+    assert load_verdict(21, 20).startswith("Перебор")
+    assert load_verdict(0, 0).startswith("Влезает")
+    assert load_verdict(1, 0).startswith("Перебор")

@@ -23,6 +23,7 @@ def env(name: str, default: str = "") -> str:
 
 BOT_TOKEN = env("BOT_TOKEN")
 OWNER_ID = int(env("OWNER_ID") or 0)
+FORUM_CHAT_ID = int(env("FORUM_CHAT_ID") or 0)  # группа-форум; пусто = всё в личку, как раньше
 WEB_HOST = env("WEB_HOST", "127.0.0.1")
 WEB_PORT = int(env("WEB_PORT", "8787"))
 WEB_KEY = env("WEB_KEY")

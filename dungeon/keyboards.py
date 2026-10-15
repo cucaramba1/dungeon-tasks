@@ -20,7 +20,8 @@ def card(t) -> InlineKeyboardMarkup:
     b.button(text="🐉 босс", callback_data=f"boss:{t['id']}")
     b.button(text="✅", callback_data=f"d:{t['id']}")
     b.button(text="🗑", callback_data=f"x:{t['id']}")
-    b.adjust(4, 4)
+    b.button(text="🧱 Застрял", callback_data=f"st:{t['id']}")
+    b.adjust(4, 4, 1)
     return b.as_markup()
 
 

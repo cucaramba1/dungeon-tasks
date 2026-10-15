@@ -80,6 +80,11 @@ DURATIONS = [
     ("почитать на полчаса", "Почитать", 30),
     ("сделать отчёт на 2 часа завтра в 10", "Сделать отчёт", 120),
     ("купить хлеб", "Купить хлеб", None),
+    ("завтра в 22:30 сутки буду на визаране", "Буду на визаране", 1440),
+    ("завтра в 22:30 на сутки уехать в Камбоджу", "Уехать в Камбоджу", 1440),
+    ("поездка двое суток", "Поездка", 2880),
+    ("командировка на 3 дня", "Командировка", 4320),
+    ("командировка на два дня", "Командировка", 2880),
 ]
 
 
@@ -93,3 +98,14 @@ def test_duration(text, title, mins):
 def test_duration_keeps_time():
     p = parse("сделать отчёт на 2 часа завтра в 10", NOW)
     assert p.due_at == d(27, 10) and p.has_time
+
+
+def test_day_long_event_keeps_time():
+    p = parse("завтра в 22:30 сутки буду на визаране", NOW)
+    assert p.due_at == d(27, 22, 30) and p.has_time and p.duration_min == 1440
+    assert p.rrule is None
+
+
+def test_every_day_is_still_a_repeat_not_duration():
+    p = parse("каждые сутки пить воду", NOW)
+    assert p.rrule == "FREQ=DAILY" and p.duration_min is None

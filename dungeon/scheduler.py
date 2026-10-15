@@ -104,7 +104,7 @@ async def tick(app: App) -> None:
         active = mac.idle_seconds() < 120
         if active or now.time() >= morning:
             db.set("last_morning", today)
-            await app.send(texts.morning(svc))
+            await app.send(texts.morning(svc), topic="checklists")
             await send_overdue_check(app, svc, now)
             await send_missed_followup(app, svc)
             await send_checklist(app, "morning", open_mac=active)
@@ -112,11 +112,11 @@ async def tick(app: App) -> None:
     # 6. вечер: сводка + разбор сундука, чек-лист — когда план на завтра готов
     if db.get("last_evening") != today and now.time() >= evening:
         db.set("last_evening", today)
-        await app.send(texts.evening(svc))
+        await app.send(texts.evening(svc), topic="checklists")
         n = await send_triage(app)
         await app.announce(svc.game.inbox_check(n == 0))
         if n:
-            await app.send("Когда раскидаешь сундук и проверишь завтра, жми:", keyboards.plan_ready())
+            await app.send("Когда раскидаешь сундук и проверишь завтра, жми:", keyboards.plan_ready(), topic="checklists")
         db.set("evening_cl_pending", today)
     if db.get("evening_cl_pending") == today and (
             not svc.inbox() or db.get("plan_ready") == today or now.time() >= hm(db.get("evening_cl_fallback"))):
@@ -132,7 +132,7 @@ async def tick(app: App) -> None:
     if stale := app.planner.expire_stale():
         n = sum(len(v) for v in stale["inputs"].values())
         await app.send(f"🧙 Планирование недели {stale['week']} висело больше полутора суток, закрыл его. "
-                       f"Твои {n} сообщ. сохранены. Сообщения боту снова становятся задачами. Начать заново: /plan")
+                       f"Твои {n} сообщ. сохранены. Сообщения боту снова становятся задачами. Начать заново: /plan", topic="plan")
     key = coach.week_key(now)
     coach_day = int(db.get("coach_day"))
     sunday = now.weekday() == coach_day and now.time() >= hm(db.get("coach_time"))
@@ -141,7 +141,7 @@ async def tick(app: App) -> None:
         await flows.plan_start(app)
     elif monday and db.get("plan_nudged") != key and (s := app.planner.active()) and s["week"] == key:
         db.set("plan_nudged", key)
-        await app.send("🧙 Планирование недели ждёт. Продолжим с того же шага:")
+        await app.send("🧙 Планирование недели ждёт. Продолжим с того же шага:", topic="plan")
         await flows.plan_show(app, s["id"])
 
     # 9. афиша: раз в час читаем каналы (фоном, тикер не ждёт)
@@ -178,7 +178,7 @@ async def send_checklist(app: App, kind: str, open_mac: bool) -> None:
     state = app.svc.checklist_state(kind)
     if not state:
         return
-    await app.send(texts.checklist(kind, state), keyboards.checklist(kind, state))
+    await app.send(texts.checklist(kind, state), keyboards.checklist(kind, state), topic="checklists")
     if open_mac and config.WEB_KEY:
         mac.open_url(f"http://127.0.0.1:{config.WEB_PORT}/?key={config.WEB_KEY}#checklist")
 
@@ -193,9 +193,9 @@ async def nag(app: App, t, now: datetime) -> None:
     level = 1 if n == 0 else 2 if n < 3 else 3
     phrase, emoji = texts.nag(t, level)
     stickers = db.q("SELECT file_id FROM stickers")
-    if stickers and level >= 2 and app.bot and app.owner:
+    if stickers and level >= 2 and app.bot and app.target("alerts")[0]:
         try:
-            await app.bot.send_sticker(app.owner, random.choice(stickers)["file_id"])
+            await app.send_sticker(random.choice(stickers)["file_id"])
         except Exception:
             await app.send(emoji)
     else:
@@ -280,13 +280,22 @@ def _sync_one(db, row) -> None:
 
 
 async def send_weekly(app: App) -> None:
+    """Воскресный обзор. Сначала факты недели уходят в Obsidian (отвечал Некит на обзор или нет, неважно),
+    и только потом топик «Планирование» чистится от прошлой недели и получает новый обзор."""
     svc = app.svc
     text, stats = texts.weekly_review(svc)
     cands = [t for t in svc.open_tasks() if t["quadrant"] in (1, 2) and not t["is_habit"]]
-    await app.send(text, keyboards.boss_pick(cands) if cands else None)
+    path = None
     try:
         path = obsidian.export_week(stats, svc.game.hero(), svc.clock())
-        if path:
-            await app.send(f"📖 Хроника недели записана в Obsidian: <i>{escape(path.stem)}</i>", silent=True)
     except Exception:
         log.exception("obsidian export")
+    if app.forum:
+        if path and not app.planner.active():
+            done, failed = await app.purge_topic()
+            log.info("weekly purge: удалено %s, не удалось %s", done, failed)
+        elif not path:
+            log.warning("weekly purge пропущен: хроника не записана в Obsidian")
+    await app.send(text, keyboards.boss_pick(cands) if cands else None, topic="plan")
+    if path:
+        await app.send(f"📖 Хроника недели записана в Obsidian: <i>{escape(path.stem)}</i>", silent=True, topic="plan")

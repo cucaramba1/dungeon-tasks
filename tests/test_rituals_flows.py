@@ -37,7 +37,7 @@ class FakeApp:
         self.rituals = Rituals(self.db, self.svc)
         self.sent, self.changed_ids, self.rituals_running = [], [], False
 
-    async def send(self, text, kb=None, silent=False):
+    async def send(self, text, kb=None, silent=False, topic="alerts"):
         self.sent.append((text, kb))
         return object()
 

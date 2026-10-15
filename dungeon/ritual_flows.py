@@ -59,7 +59,7 @@ def card_text(app, row, now: datetime) -> str:
 
 async def send_card(app, row, now: datetime, prefix: str = "") -> None:
     msg = await app.send(prefix + card_text(app, row, now),
-                         keyboards.ritual_card(row["id"], row["link"], mode_for(app, row)))
+                         keyboards.ritual_card(row["id"], row["link"], mode_for(app, row)), topic="events")
     if msg is not None:
         app.rituals.mark_sent(row["id"], now)
 
@@ -80,15 +80,15 @@ def _change_text(row, now: datetime) -> str:
 async def send_change(app, row, now: datetime) -> None:
     if row["status"] == "applied":
         msg = await app.send(_change_text(row, now) + f"\n<a href=\"{row['link']}\">пост</a>",
-                             keyboards.ritual_undo(row["id"]))
+                             keyboards.ritual_undo(row["id"]), topic="events")
     elif row["status"] == "ambiguous":
         cands = json.loads(row["extra"] or "{}").get("candidates", [])
         what = "перенесли" if row["kind"] == "move" else "отменили"
         msg = await app.send(f"🤔 В {escape(row['ritual'] or '')} что-то {what}, но я не понял, какое именно занятие.\n"
-                             f"<a href=\"{row['link']}\">Пост</a>. Выбери:", keyboards.ritual_pick(row["id"], cands))
+                             f"<a href=\"{row['link']}\">Пост</a>. Выбери:", keyboards.ritual_pick(row["id"], cands), topic="events")
     else:  # unresolved
         msg = await app.send(f"🤔 В {escape(row['ritual'] or '')} пост про перенос или отмену, но в плане нет занятия, "
-                             f"которое можно двигать. <a href=\"{row['link']}\">Пост</a>")
+                             f"которое можно двигать. <a href=\"{row['link']}\">Пост</a>", topic="events")
     if msg is not None:
         app.rituals.mark_sent(row["id"], now)
 
@@ -120,7 +120,7 @@ async def _tick(app, now: datetime, quiet: bool) -> None:
     if r.digest_due(now):
         rows = r.unsent_cards(now)[:rituals.DIGEST_CAP]
         if rows:
-            await app.send(f"🕯 Анонсы из чатов: {len(rows)}")
+            await app.send(f"🕯 Анонсы из чатов: {len(rows)}", topic="events")
         for row in rows:
             await send_card(app, row, now)
     for row in r.reminders(now):
@@ -143,7 +143,7 @@ async def collect(app) -> dict:
         if stats.get("claude_down") and app.db.get("rt_claude_notice") != today:
             app.db.set("rt_claude_notice", today)
             await app.send("⚠️ Не могу разобрать анонсы из чатов: claude недоступен (лимит или сеть). "
-                           "Посты не потеряются, разберу, когда оживёт.")
+                           "Посты не потеряются, разберу, когда оживёт.", topic="events")
         return stats
     except Exception:
         log.exception("rituals collect failed")

@@ -134,6 +134,14 @@ CREATE TABLE IF NOT EXISTS plan_sessions (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS topic_msgs (
+    chat_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    topic TEXT NOT NULL,           -- plan | events | checklists | alerts
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (chat_id, message_id)
+);
+
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT

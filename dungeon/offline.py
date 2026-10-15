@@ -91,6 +91,15 @@ def step_d(data: dict, now: datetime) -> dict:
     return schedule(fixed, rest + extra, data)
 
 
+def load_verdict(planned: float, budget: float) -> str:
+    """Правило 70/30: до 70% бюджета ок, 30% остаётся буфером на растянувшееся и непредвиденное."""
+    if planned <= budget * 0.7:
+        return "Влезает, буфер 30% остаётся."
+    if planned <= budget:
+        return f"Впритык: {planned / budget:.0%} бюджета, буфера на непредвиденное нет."
+    return f"Перебор на {planned - budget:.1f} ч, что-то стоит выкинуть."
+
+
 def schedule(context: list[dict], tasks: list[dict], data: dict) -> dict:
     """Жадно: задачи с датой остаются где есть, без даты идут в самый свободный день под бюджет."""
     days = [d.split()[0] for d in data["week"]["days"]]
@@ -110,7 +119,7 @@ def schedule(context: list[dict], tasks: list[dict], data: dict) -> dict:
         items.append(t)
     planned = sum(used.values()) / 60
     budget = data["week"]["budget_hours"]
-    verdict = "Влезает." if planned <= budget else f"Перебор на {planned - budget:.1f} ч, что-то стоит выкинуть."
+    verdict = load_verdict(planned, budget)
     return {"items": items, "load": {"planned_hours": round(planned, 1), "budget_hours": budget, "verdict": verdict},
             "comment": "Расставил без Claude: задачи без даты разложены по самым свободным дням. Поправь сообщениями.",
             "offline": True}

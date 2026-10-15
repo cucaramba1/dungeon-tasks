@@ -1,6 +1,7 @@
 """Telegram-бот: ввод задач текстом и голосом, кнопки, команды."""
 from __future__ import annotations
 
+import functools
 import logging
 import re
 import tempfile
@@ -12,7 +13,7 @@ from aiogram import BaseMiddleware, F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import BotCommand, CallbackQuery, Message
 
-from . import flows, keyboards, leisure, ritual_flows, stt, texts
+from . import flows, keyboards, leisure, ritual_flows, stt, stuck, texts
 from .app import App
 
 log = logging.getLogger(__name__)
@@ -42,6 +43,7 @@ HELP = """<b>⚔ Dungeon Tasks</b>
 /plan — спланировать неделю с коучем (4 шага) · /cancel — выйти
 /free — «я свободен», предложи досуг
 /settings · /set morning 08:00
+/setup_forum — в группе с Темами: создать топики бота
 Длительность: <i>лендинг ~2ч</i>, <i>монтаж на 40 мин</i> — коуч считает по ней нагрузку."""
 
 COMMANDS = [
@@ -49,6 +51,7 @@ COMMANDS = [
     ("matrix", "Карта подземелья (матрица)"), ("inbox", "Разобрать сундук"), ("hero", "Лист героя"),
     ("focus", "Фокус-рейд"), ("stop", "Прервать рейд"), ("boss", "Босс недели"), ("shop", "Таверна"),
     ("checklist", "Чек-листы утра и вечера"), ("plan", "Спланировать неделю с коучем"), ("free", "Я свободен: что поделать?"),
+    ("stuck", "Застрял: 7 вопросов против прокрастинации"),
     ("settings", "Настройки"), ("help", "Помощь"),
 ]
 SETTABLE = {
@@ -215,12 +218,36 @@ def build(app: App) -> Router:
         await m.answer("Поменять: <code>/checklist morning</code> и пункты с новой строки. "
                        "Вернуть стартовый: <code>/checklist reset morning</code>")
 
+    @r.message(Command("setup_forum"))
+    async def setup_forum_cmd(m: Message):
+        if m.chat.type != "supergroup" or not m.chat.is_forum:
+            await m.answer("Запусти это в группе, где включены Темы (Topics): настройки группы → Темы.")
+            return
+        try:
+            ids = await app.setup_forum(m.chat.id)
+        except Exception as e:
+            log.exception("setup_forum")
+            await m.answer("Не вышло создать топики. Нужно сделать бота админом с правом «Управление темами».\n"
+                           f"<code>{escape(str(e)[:200])}</code>")
+            return
+        await m.answer("✅ Топики готовы: " + ", ".join(app_topics(ids)) + ".\n"
+                       "Задачи и события пиши в 🎯 События, планирование недели живёт в 📅 Планирование.")
+
     @r.message(Command("plan"))
     async def plan_cmd(m: Message):
         await flows.plan_start(app)
 
+    @r.message(Command("stuck"))
+    async def stuck_cmd(m: Message, command: CommandObject):
+        arg = (command.args or "").strip().lstrip("#")
+        t = svc.get(int(arg)) if arg.isdigit() else None
+        await m.answer(stuck.start(app.db, t))
+
     @r.message(Command("cancel"))
     async def cancel_cmd(m: Message):
+        if stuck.cancel(app.db):
+            await m.answer("Выход из режима «застрял».")
+            return
         sess = app.planner.active()
         if not sess:
             await m.answer("Нечего отменять.")
@@ -255,6 +282,8 @@ def build(app: App) -> Router:
     async def voice(m: Message):
         media = m.voice or m.audio or m.video_note
         wait = await m.answer("🎙 Слушаю…")
+        if in_plan_topic(app, m):
+            app.track("plan", m.chat.id, wait.message_id)
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "voice.ogg"
             await m.bot.download(media, destination=path)
@@ -275,7 +304,7 @@ def build(app: App) -> Router:
         await handle_text(app, m, m.text, "tg")
 
     # ---------- кнопки ----------
-    @r.callback_query(F.data.regexp(r"^(q|h|boss|d|x|s|tm|sk|f|ym):"))
+    @r.callback_query(F.data.regexp(r"^(q|h|boss|d|x|s|tm|sk|f|ym|st):"))
     async def cb(c: CallbackQuery):
         parts = c.data.split(":")
         act, tid = parts[0], int(parts[1])
@@ -297,6 +326,9 @@ def build(app: App) -> Router:
             await app.changed(tid)
             await c.message.edit_text(texts.card(t, now), reply_markup=keyboards.card(t))
             await c.answer()
+        elif act == "st":
+            await c.answer()
+            await c.message.answer(stuck.start(app.db, t))
         elif act == "boss":
             t = svc.make_boss(tid)
             await c.answer("Босс назначен 🐉")
@@ -458,11 +490,33 @@ def build(app: App) -> Router:
     return r
 
 
+def app_topics(ids: dict[str, int]) -> list[str]:
+    from .app import TOPICS
+    return [TOPICS[k] for k in ids]
+
+
+def in_plan_topic(app: App, m: Message) -> bool:
+    """Сообщение из топика «Планирование» (форум не настроен: любое, как раньше)."""
+    return app.in_topic(m.chat.id, m.message_thread_id if m.is_topic_message else None, "plan")
+
+
 async def handle_text(app: App, m: Message, text: str, source: str) -> None:
-    if app.planner.active():
+    in_plan = in_plan_topic(app, m)
+    if in_plan:
+        app.track("plan", m.chat.id, m.message_id)
+    if not in_plan and stuck.active(app.db):
+        await stuck_answer(app, m, text)
+        return
+    if app.planner.active() and in_plan:
         n = await flows.plan_input(app, text)
-        await m.answer(f"👌 записал в планирование недели ({n}). Ещё что-то или жми кнопку под шагом.\n"
-                       "<i>Пока идёт планирование, сообщения не становятся задачами. Выйти: /cancel</i>")
+        note = await m.answer(f"👌 записал в планирование недели ({n}). Ещё что-то или жми кнопку под шагом.\n"
+                              "<i>Пока идёт планирование, сообщения в этом топике идут в план. Выйти: /cancel</i>")
+        app.track("plan", m.chat.id, note.message_id)
+        return
+    if app.forum and in_plan:
+        note = await m.answer("Здесь живёт планирование недели. Начать: /plan. "
+                              "Задачи и события пиши в 🎯 События.")
+        app.track("plan", m.chat.id, note.message_id)
         return
     reply = m.reply_to_message
     if reply and reply.from_user and reply.from_user.is_bot and (mr := re.search(r"\[a(\d+)\]", reply.text or "")):
@@ -484,9 +538,20 @@ async def handle_text(app: App, m: Message, text: str, source: str) -> None:
         await app.announce(msgs)
 
 
+async def stuck_answer(app: App, m: Message, text: str) -> None:
+    msg, res = stuck.answer(app.db, text)
+    if not res:
+        await m.answer(msg)
+        return
+    t = app.svc.create_parsed(stuck.to_parsed(res), "stuck")
+    app.db.x("UPDATE tasks SET notes=? WHERE id=?", (f"Награда: {res['reward']}", t["id"]))
+    await app.ins.sync(app.svc.get(t["id"]))
+    await m.answer(stuck.summary(res), reply_markup=keyboards.focus(t["id"]))
+
+
 async def send_triage(app: App, m: Message | None = None) -> int:
     items = app.svc.inbox()
-    send = m.answer if m else app.send
+    send = m.answer if m else functools.partial(app.send, topic="events")
     if not items:
         if m:
             await m.answer("📥 Сундук у входа пуст. Чистота как в эльфийском храме.")
@@ -497,7 +562,7 @@ async def send_triage(app: App, m: Message | None = None) -> int:
         if m:
             await m.answer(text, reply_markup=keyboards.triage(t))
         else:
-            await app.send(text, keyboards.triage(t), silent=True)
+            await app.send(text, keyboards.triage(t), silent=True, topic="events")
     return len(items)
 
 

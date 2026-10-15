@@ -222,6 +222,7 @@ class FakeApp:
         self.svc, self.db, self.ins, self.bot, self.owner = svc, svc.db, FakeIns(), None, 0
         self.sent = []
         self.ready = True
+        self.forum = 0
         from dungeon.events import Events
         from dungeon.leisure import Leisure
         from dungeon.planner import Planner
@@ -234,7 +235,7 @@ class FakeApp:
     def spawn(self, coro):
         asyncio.get_event_loop().create_task(coro)
 
-    async def send(self, text, kb=None, silent=False):
+    async def send(self, text, kb=None, silent=False, topic="alerts"):
         self.sent.append(text)
 
     async def announce(self, msgs):

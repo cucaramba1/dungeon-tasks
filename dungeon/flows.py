@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 
 async def plan_show(app: App, sid: int) -> None:
     s = app.planner.get(sid)
-    await app.send(_trim(app, s), keyboards.plan(sid, s["step"]))
+    await app.send(_trim(app, s), keyboards.plan(sid, s["step"]), topic="plan")
 
 
 def _trim(app: App, s: dict) -> str:
@@ -46,7 +46,7 @@ async def plan_next(app: App, sid: int) -> str:
         return "Сначала расскажи про неделю: хоть одно сообщение"
     app.plan_busy = True
     try:
-        await app.send("⏳ Коуч думает над следующим шагом, до пары минут…", silent=True)
+        await app.send("⏳ Коуч думает над следующим шагом, до пары минут…", silent=True, topic="plan")
         if s["step"] < 4:
             await app.planner.advance(sid)
             await plan_show(app, sid)
@@ -57,11 +57,11 @@ async def plan_next(app: App, sid: int) -> str:
         path = obsidian.export_plan(s, app.svc.clock(), coach.plan_start(app.svc.clock()))
         tail = f"\n📖 В Obsidian: <i>{escape(path.stem)}</i>" if path else ""
         await app.send(f"✅ Неделя спланирована: {len(created)} задач и встреч в подземелье.{tail}\n"
-                       "Посмотреть: /week")
+                       "Посмотреть: /week", topic="plan")
         return "Готово"
     except Exception as e:
         log.exception("planner step failed")
-        await app.send(f"🧙 Коуч споткнулся: {escape(str(e)[:300])}\nЖми кнопку ещё раз.")
+        await app.send(f"🧙 Коуч споткнулся: {escape(str(e)[:300])}\nЖми кнопку ещё раз.", topic="plan")
         return "Ошибка"
     finally:
         app.plan_busy = False
@@ -75,7 +75,7 @@ async def plan_input(app: App, text: str) -> int:
 
 async def free_ask(app: App) -> None:
     leisure.mark_asked(app.db, app.svc.clock())
-    await app.send("🧭 Свободен сейчас?", keyboards.free_ask())
+    await app.send("🧭 Свободен сейчас?", keyboards.free_ask(), topic="events")
 
 
 async def free_no(app: App) -> str:
@@ -93,19 +93,19 @@ async def free_yes(app: App) -> None:
     now = app.svc.clock()
     end = now.replace(hour=23, minute=59)
     evs = app.events.upcoming(now + timedelta(minutes=30), end, limit=3)
-    await app.send("🙌 Тогда вот варианты. Бери, что ляжет:")
+    await app.send("🙌 Тогда вот варианты. Бери, что ляжет:", topic="events")
     if evs:
         ev = evs[0]
-        await app.send(escape(human(ev, now.tzinfo)), keyboards.event(ev["id"], ev["link"]))
+        await app.send(escape(human(ev, now.tzinfo)), keyboards.event(ev["id"], ev["link"]), topic="events")
     for kind in random.sample(["film", "series"], 1) + ["book"]:
         item = app.leisure.pick(kind)
         if item:
             await app.send(f"{leisure.KINDS[kind]}: <b>{escape(item['title'])}</b>\n<i>{escape(item['desc'])}</i>",
-                           keyboards.leisure(item["rid"], kind))
+                           keyboards.leisure(item["rid"], kind), topic="events")
     lib = [t for t in app.svc.open_tasks() if t["quadrant"] == 2 and not t["due_at"] and not t["is_habit"]]
     if lib:
         t = random.choice(lib)
-        await app.send(f"📜 Или продвинь важное: <b>{escape(t['title'])}</b>", keyboards.focus(t["id"]))
+        await app.send(f"📜 Или продвинь важное: <b>{escape(t['title'])}</b>", keyboards.focus(t["id"]), topic="events")
 
 
 async def event_to_task(app: App, event_id: int) -> str:
