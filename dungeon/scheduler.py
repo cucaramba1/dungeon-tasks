@@ -77,6 +77,8 @@ async def tick(app: App) -> None:
     due = db.q("SELECT * FROM tasks WHERE status='open' AND next_nag_at IS NOT NULL AND next_nag_at<=? "
                "ORDER BY next_nag_at", (iso(now),))
     for t in due:
+        if t["is_habit"] and svc.resting():
+            continue  # отпуск: ритуалы молчат, напоминания вернутся после rest_until
         if t["is_habit"]:
             await nag(app, t, now)
         else:

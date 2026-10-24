@@ -271,6 +271,11 @@ class Service:
         self._reschedule(tid, now)
         return self.get(tid)
 
+    def resting(self, day=None) -> bool:
+        """Режим отдыха (/rest, идея из Habitica): до rest_until включительно ритуалы не штрафуют и не напоминают."""
+        until = self.db.get("rest_until", "") or ""
+        return bool(until) and (day or self.clock().date()).isoformat() <= until
+
     # ---------- смена суток ----------
     def rollover(self) -> tuple[list, list[str]]:
         """Ритуалы, не сделанные до конца своего дня, считаются пропущенными.
@@ -282,7 +287,10 @@ class Service:
             due = parse_iso(t["due_at"]).astimezone(now.tzinfo)
             if due >= start:
                 continue
-            if t["is_habit"]:
+            if t["is_habit"] and self.resting(due.date()):  # отпуск/болезнь: ни штрафа, ни сгоревшего стрика
+                self.db.x("UPDATE tasks SET status='skipped' WHERE id=?", (t["id"],))
+                self._spawn_next(t)
+            elif t["is_habit"]:
                 self.db.x("UPDATE tasks SET status='missed' WHERE id=?", (t["id"],))
                 msgs += self.game.miss_habit(t)
                 missed.append(t)

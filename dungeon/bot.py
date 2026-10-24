@@ -43,6 +43,7 @@ HELP = """<b>⚔ Dungeon Tasks</b>
 /plan — спланировать неделю с коучем (4 шага) · /cancel — выйти
 /free — «я свободен», предложи досуг
 /settings · /set morning 08:00
+/rest 5 — отпуск/болезнь на 5 дней: ритуалы без штрафов и напоминаний · /rest off
 /setup_forum — в группе с Темами: создать топики бота
 Длительность: <i>лендинг ~2ч</i>, <i>монтаж на 40 мин</i> — коуч считает по ней нагрузку."""
 
@@ -52,7 +53,7 @@ COMMANDS = [
     ("focus", "Фокус-рейд"), ("stop", "Прервать рейд"), ("boss", "Босс недели"), ("shop", "Таверна"),
     ("checklist", "Чек-листы утра и вечера"), ("plan", "Спланировать неделю с коучем"), ("free", "Я свободен: что поделать?"),
     ("stuck", "Застрял: 7 вопросов против прокрастинации"),
-    ("settings", "Настройки"), ("help", "Помощь"),
+    ("rest", "Отпуск/болезнь: ритуалы без штрафов"), ("settings", "Настройки"), ("help", "Помощь"),
 ]
 SETTABLE = {
     "morning": "время утренней сводки", "evening": "время вечерней сводки",
@@ -196,6 +197,22 @@ def build(app: App) -> Router:
             return
         app.db.set(k, v)
         await m.answer(f"✅ {k} = {v}")
+
+    @r.message(Command("rest"))
+    async def rest(m: Message, command: CommandObject):
+        arg = (command.args or "").strip().lower()
+        if arg in ("off", "0", "стоп"):
+            app.db.set("rest_until", "")
+            await m.answer("⚔ Отдых закончен, ритуалы снова в строю.")
+            return
+        if not re.fullmatch(r"\d{1,2}", arg) or not 1 <= int(arg) <= 30:
+            until = app.db.get("rest_until", "") or ""
+            await m.answer((f"🏝 Отдых до {until}. " if app.svc.resting() else "")
+                           + "Формат: <code>/rest 5</code> (дней, до 30) или <code>/rest off</code>")
+            return
+        until = (app.svc.clock().date() + timedelta(days=int(arg) - 1)).isoformat()
+        app.db.set("rest_until", until)
+        await m.answer(f"🏝 Отдых до {until} включительно: ритуалы не штрафуют, не напоминают, стрики не сгорают.")
 
     @r.message(Command("checklist"))
     async def checklist_cmd(m: Message, command: CommandObject):

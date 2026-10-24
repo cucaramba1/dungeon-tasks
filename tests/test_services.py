@@ -104,6 +104,21 @@ def test_rollover_misses_habit_and_costs_hp(env):
     assert parse_iso(nxt["due_at"]).astimezone(TZ) == datetime(2026, 9, 28, 7, 0, tzinfo=TZ)
 
 
+
+def test_rest_mode_skips_habit_without_penalty(env):
+    svc, clock = env
+    [t] = svc.create("каждый день в 7 утра йога")
+    svc.db.set("rest_until", "2026-09-27")
+    clock.dt = datetime(2026, 9, 28, 0, 1, tzinfo=TZ)  # 27-го отдыхал
+    missed, _ = svc.rollover()
+    assert missed == [] and svc.game.hero()["hp"] == 100
+    assert svc.get(t["id"])["status"] == "skipped" and not svc.resting()
+    nxt = svc.db.one("SELECT * FROM tasks WHERE status='open'")
+    assert parse_iso(nxt["due_at"]).astimezone(TZ) == datetime(2026, 9, 28, 7, 0, tzinfo=TZ)
+    clock.dt = datetime(2026, 9, 29, 0, 1, tzinfo=TZ)  # отдых кончился: 28-й пропуск снова штрафуется
+    missed, _ = svc.rollover()
+    assert len(missed) == 1 and svc.game.hero()["hp"] == 90
+
 def test_overdue_open_excludes_habits_and_future(env):
     svc, clock = env
     [overdue] = svc.create("созвон в 20:00")  # сегодня 26.09, станет просроченным завтра
