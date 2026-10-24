@@ -20,7 +20,7 @@ _cache: dict = {"mtime": None, "items": []}
 
 
 def leisure_dir() -> Path:
-    return Path(config.env("LEISURE_DIR", str(config.OBSIDIAN_DIR.parent / "Досуг")))
+    return Path(config.env("LEISURE_DIR", str(Path.home() / "Documents/Obsidian Досуг/Досуг")))
 
 
 def _kind(genre: str) -> str | None:
