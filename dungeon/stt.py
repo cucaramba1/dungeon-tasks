@@ -35,7 +35,12 @@ async def transcribe(audio: Path) -> str:
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 env={**os.environ, "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + os.environ.get("PATH", "")},
             )
-            _, err = await asyncio.wait_for(proc.communicate(), timeout=180)
+            try:
+                _, err = await asyncio.wait_for(proc.communicate(), timeout=180)
+            finally:
+                if proc.returncode is None:  # таймаут или отмена: модель в 1.5 ГБ не остаётся висеть
+                    proc.kill()
+                    await proc.wait()
             if proc.returncode != 0:
                 log.error("whisper failed: %s", err.decode(errors="ignore")[-500:])
                 raise RuntimeError("Whisper не смог расшифровать голос")

@@ -185,9 +185,12 @@ def build(app: App) -> Router:
             await m.answer("Формат: <code>/set morning 07:30</code>. Ключи в /settings")
             return
         k, v = parts
-        if k in TIME_KEYS and not re.fullmatch(r"\d{1,2}:\d{2}", v):
-            await m.answer("Время в формате ЧЧ:ММ")
-            return
+        if k in TIME_KEYS:
+            t = re.fullmatch(r"(\d{1,2}):(\d{2})", v)
+            if not t or int(t[1]) > 23 or int(t[2]) > 59:  # 25:00 ронял тикер каждые 15 с
+                await m.answer("Время в формате ЧЧ:ММ")
+                return
+            v = f"{int(t[1]):02d}:{t[2]}"  # 9:00 → 09:00, иначе строковые сравнения времени врут
         if k not in TIME_KEYS and not re.fullmatch(r"\d+(\.\d+)?", v):
             await m.answer("Нужно число")
             return
@@ -357,6 +360,9 @@ def build(app: App) -> Router:
             await c.message.edit_text(f"➡ {escape(t['title'])} — {texts.when(t, now)}")
             await c.answer("Перенёс на завтра")
         elif act == "sk":
+            if t["status"] != "open":
+                await c.answer("Уже закрыто")
+                return
             nxt = await app.skip(tid)
             tail = f", следующий раз {texts.when(nxt, now)}" if nxt else ""
             await c.message.edit_text(f"⏭ {escape(t['title'])} — пропущено без штрафа{tail}")

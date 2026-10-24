@@ -317,3 +317,13 @@ def test_recent_past_dated_card_stays_alive_old_one_expires(env):
     assert recent in {x["id"] for x in r.unsent_cards(NOW, within=timedelta(hours=3))}
     r.retime(recent, datetime(2026, 10, 19, 11, 0, tzinfo=TZ), True)                       # Некит поправил дату
     assert r.feed(recent)["needs_check"] == 0 and recent in {x["id"] for x in r.unsent_cards(NOW)}
+
+
+def test_skip_after_done_does_not_spawn_second_instance(env):
+    db, svc, r = env
+    t = dnd(svc)
+    svc.done(t["id"])
+    habits = lambda: [x for x in svc.open_tasks() if x["is_habit"]]
+    n = len(habits())
+    assert svc.skip(t["id"]) is None  # старая карточка «Пропуск» после «Сделал»
+    assert svc.get(t["id"])["status"] == "done" and len(habits()) == n

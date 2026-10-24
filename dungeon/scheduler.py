@@ -82,7 +82,8 @@ async def tick(app: App) -> None:
         else:
             late = now - parse_iso(t["next_nag_at"]) > LATE
             prefix = "⏳ <i>Пропущено, пока ноут спал</i>\n" if late else ""
-            await app.send(f"{prefix}⏰ <b>{escape(t['title'])}</b>", keyboards.remind(t))
+            if await app.send(f"{prefix}⏰ <b>{escape(t['title'])}</b>", keyboards.remind(t)) is None:
+                continue  # сеть ещё не поднялась после сна: повторим на следующем тике, а не потеряем
             db.x("UPDATE tasks SET next_nag_at=NULL, nag_count=nag_count+1 WHERE id=?", (t["id"],))
 
     # 4. фокус-рейды
@@ -102,17 +103,17 @@ async def tick(app: App) -> None:
     morning, evening = hm(db.get("morning")), hm(db.get("evening"))
     if db.get("last_morning") != today and hm(db.get("morning_from")) <= now.time() < evening:
         active = mac.idle_seconds() < 120
-        if active or now.time() >= morning:
+        # флаг только после успешной отправки, иначе сводка пропадала на весь день
+        if (active or now.time() >= morning) and await app.send(texts.morning(svc), topic="checklists") is not None:
             db.set("last_morning", today)
-            await app.send(texts.morning(svc), topic="checklists")
             await send_overdue_check(app, svc, now)
             await send_missed_followup(app, svc)
             await send_checklist(app, "morning", open_mac=active)
 
     # 6. вечер: сводка + разбор сундука, чек-лист — когда план на завтра готов
-    if db.get("last_evening") != today and now.time() >= evening:
+    if (db.get("last_evening") != today and now.time() >= evening
+            and await app.send(texts.evening(svc), topic="checklists") is not None):
         db.set("last_evening", today)
-        await app.send(texts.evening(svc), topic="checklists")
         n = await send_triage(app)
         await app.announce(svc.game.inbox_check(n == 0))
         if n:
@@ -240,7 +241,8 @@ async def process_calendar_outbox(app: App) -> None:
     db = app.db
     for row in db.q("SELECT * FROM calendar_outbox ORDER BY id LIMIT ?", (CALENDAR_BATCH,)):
         try:
-            await asyncio.to_thread(_sync_one, db, row)
+            # поток не прервать, но тикер дальше не ждёт: повисший iCloud больше не стопорит напоминания
+            await asyncio.wait_for(asyncio.to_thread(_sync_one, db, row), 90)
         except Exception:
             log.exception("calendar sync failed, outbox id=%s task_id=%s", row["id"], row["task_id"])
             return

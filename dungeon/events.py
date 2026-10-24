@@ -177,7 +177,7 @@ class Events:
                    int(ev["has_time"]), ev["title"], ev["text"], ev["category"], ev["price"], iso(utcnow())))
         return True
 
-    async def collect(self, tz, fetch=tgmcp.history, pause: float = 1.0) -> dict:
+    async def collect(self, tz, fetch=tgmcp.history, pause: float = 1.0, now=None) -> dict:
         """Пройти по каналам, забрать новые посты. Возвращает статистику."""
         stats = {"posts": 0, "events": 0, "errors": 0}
         fails = 0
@@ -206,7 +206,7 @@ class Events:
             if posts:
                 self.db.set(f"ev_last:{ch['id']}", max(p.get("id", 0) for p in posts))
             await asyncio.sleep(pause)  # не душим telegram-mcp
-        self.db.x("DELETE FROM events_feed WHERE kind='afisha' AND starts_at<?", (iso(utcnow() - timedelta(days=14)),))
+        self.db.x("DELETE FROM events_feed WHERE kind='afisha' AND starts_at<?", (iso((now or utcnow()) - timedelta(days=14)),))
         return stats
 
     # --- отбор ---

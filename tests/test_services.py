@@ -237,6 +237,7 @@ class FakeApp:
 
     async def send(self, text, kb=None, silent=False, topic="alerts"):
         self.sent.append(text)
+        return True  # как настоящий App.send: None только при сбое отправки
 
     async def announce(self, msgs):
         if msgs:

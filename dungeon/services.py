@@ -195,6 +195,8 @@ class Service:
     def skip(self, tid: int):
         """Пропустить экземпляр повторяющейся задачи без штрафа."""
         t = self.get(tid)
+        if not t or t["status"] != "open":  # старая карточка после «Сделал» или двойной тап: без дубля экземпляра
+            return None
         self.db.x("UPDATE tasks SET status='skipped' WHERE id=?", (tid,))
         return self._spawn_next(t)
 

@@ -33,6 +33,7 @@ def _calendar() -> caldav.Calendar:
         url="https://caldav.icloud.com/",
         username=config.ICLOUD_APPLE_ID,
         password=config.ICLOUD_APP_PASSWORD,
+        timeout=20,
     )
     principal = client.principal()
     for cal in principal.calendars():

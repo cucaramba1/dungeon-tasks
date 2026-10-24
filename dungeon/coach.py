@@ -174,6 +174,7 @@ async def ask_claude(instructions: str, data: dict, schema: dict, system: str | 
             "--system-prompt", system or SYSTEM, "--json-schema", json.dumps(schema, ensure_ascii=False)]
     if config.COACH_MODEL:
         args += ["--model", config.COACH_MODEL]
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -181,6 +182,10 @@ async def ask_claude(instructions: str, data: dict, schema: dict, system: str | 
         out, err = await asyncio.wait_for(proc.communicate(prompt.encode()), timeout=600)
     except (OSError, asyncio.TimeoutError) as e:
         raise ClaudeUnavailable(f"claude не запустился или завис: {e}") from e
+    finally:
+        if proc is not None and proc.returncode is None:  # таймаут или отмена: не оставляем claude жить
+            proc.kill()
+            await proc.wait()
     if proc.returncode != 0:
         raise ClaudeUnavailable(*_explain(out, err))
     try:

@@ -29,6 +29,18 @@ TOPICS = {
 PURGE_TOPIC = "plan"   # этот топик чистится раз в неделю
 
 
+
+def _chunks(text: str, limit: int = 3800) -> list[str]:
+    """Режем по строкам, чтобы не порвать HTML-тег посреди строки."""
+    out, cur = [], ""
+    for ln in text.split("\n"):
+        if cur and len(cur) + 1 + len(ln) > limit:
+            out.append(cur)
+            cur = ln
+        else:
+            cur = f"{cur}\n{ln}" if cur else ln
+    return out + [cur[:4000]] if cur or not out else out
+
 class App:
     def __init__(self, db: DB | None = None):
         self.db = db or DB(config.DB_PATH)
@@ -136,7 +148,11 @@ class App:
             log.info("send skipped (нет бота/владельца): %s", text[:80])
             return None
         try:
-            msg = await self.bot.send_message(chat_id, text, reply_markup=kb, disable_notification=silent,
+            *head, last = _chunks(text)
+            for part in head:  # длинная сводка/матрица: лимит Telegram 4096, кнопки под последним куском
+                m = await self.bot.send_message(chat_id, part, disable_notification=silent, message_thread_id=thread_id)
+                self.track(topic, chat_id, m.message_id)
+            msg = await self.bot.send_message(chat_id, last, reply_markup=kb, disable_notification=silent,
                                               message_thread_id=thread_id)
             self.track(topic, chat_id, msg.message_id)
             return msg

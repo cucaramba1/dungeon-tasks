@@ -91,9 +91,9 @@ def test_collect_dedup_and_votes():
     async def fetch(chat_id, limit):
         return feeds.get(chat_id, [])
 
-    stats = asyncio.run(evs.collect(TZ, fetch=fetch, pause=0))
+    stats = asyncio.run(evs.collect(TZ, fetch=fetch, pause=0, now=datetime(2026, 9, 25, tzinfo=TZ)))
     assert stats["events"] == 1  # один EXIT на два канала
-    stats = asyncio.run(evs.collect(TZ, fetch=fetch, pause=0))
+    stats = asyncio.run(evs.collect(TZ, fetch=fetch, pause=0, now=datetime(2026, 9, 25, tzinfo=TZ)))
     assert stats["posts"] == 0  # второй проход не перечитывает старое
     [ev] = evs.upcoming(datetime(2026, 9, 26, tzinfo=TZ), datetime(2026, 9, 27, tzinfo=TZ))
     assert ev["category"] == "вечеринка"
