@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from datetime import datetime, timedelta
 
 from .db import DB, iso, parse_iso, utcnow
@@ -23,6 +24,7 @@ BOSS_XP, BOSS_GOLD = 300, 100
 FOCUS_XP = 20
 CHECKLIST_XP = 15
 HABIT_MISS_HP = 10
+DECAY, DECAY_FLOOR, DECAY_DAYS = 0.9747, 0.75, 14  # частый ритуал даёт меньше (Habitica scoreTask.js), но не ниже 75%
 
 
 @dataclass(frozen=True)
@@ -56,9 +58,20 @@ ACHIEVEMENTS = [
 ACH_BY_CODE = {a.code: a for a in ACHIEVEMENTS}
 
 
+def to_next(level: int) -> int:
+    """XP от уровня до следующего, кривая Habitica (statHelpers.js): быстрые первые уровни,
+    дальше рост почти линейный, а не квадратичный, как было (Архимаг 28 требовал 18 900 XP)."""
+    if level < 5:
+        return 25 * level
+    if level == 5:
+        return 150
+    return 10 * round((0.25 * level ** 2 + 10 * level + 139.75) / 10)
+
+
+@lru_cache(maxsize=None)
 def level_threshold(level: int) -> int:
     """Сколько всего XP нужно, чтобы достичь уровня."""
-    return 25 * level * (level - 1)
+    return sum(to_next(k) for k in range(1, level))
 
 
 def level_for(xp: int) -> int:
@@ -127,11 +140,19 @@ class Game:
         return int(round(xp))
 
     # --- события ---
+    def habit_decay(self, task) -> float:
+        """Сколько раз серия ритуала закрыта за 14 дней: каждый раз базовый XP чуть меньше, фарм лёгкого не окупается."""
+        since = iso(utcnow() - timedelta(days=DECAY_DAYS))
+        n = self.db.one("SELECT COUNT(*) AS n FROM events e JOIN tasks t ON t.id=e.task_id WHERE e.kind='done' "
+                        "AND COALESCE(t.series_id, t.id)=? AND e.at>=?", (task["series_id"] or task["id"], since))["n"]
+        return max(DECAY_FLOOR, DECAY ** n)
+
     def complete(self, task) -> tuple[int, list[str]]:
         xp = self.xp_for(task)
         msgs: list[str] = []
         streak = 0
         if task["is_habit"]:
+            xp = int(round(xp * self.habit_decay(task)))
             streak = self._streak_hit(task)
             xp += min(streak, 10)
         gold = xp // 5

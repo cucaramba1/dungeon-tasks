@@ -28,8 +28,9 @@ def env():
 
 def test_levels():
     assert level_for(0) == 1
-    assert level_for(49) == 1 and level_for(50) == 2
-    assert level_threshold(3) == 150
+    assert level_for(24) == 1 and level_for(25) == 2
+    assert level_threshold(3) == 75 and level_threshold(6) == 400  # кривая Habitica: 25, 50, 75, 100, 150, 210...
+    assert level_threshold(28) < 12000  # раньше Архимаг стоил 18 900 XP
     assert title_for(1) == "Подмастерье гнома"
     assert title_for(12) == "Рунный кузнец"
 
@@ -449,3 +450,16 @@ def test_leisure_frontmatter_and_mark_seen(tmp_path):
     text = (d / "A.md").read_text()
     assert "status: смотрел" in text and "tags: [смотрел, хочу]" in text and text.endswith("Про A\n")
     assert scan(d) == []
+
+
+def test_frequent_habit_gives_decaying_base_xp_with_floor(env):
+    svc, clock = env
+    gains = []
+    for _ in range(20):
+        [t] = [x for x in svc.open_tasks() if x["is_habit"]] or svc.create("каждый день в 7 утра йога")
+        xp, _, _ = svc.done(t["id"])
+        gains.append(xp - min(svc.db.one("SELECT current FROM streaks")["current"], 10))  # без стрик-бонуса
+        clock.dt += timedelta(days=1)
+    base = gains[0]  # первый раз без затухания
+    assert all(a >= b for a, b in zip(gains, gains[1:])) and gains[5] < base  # 0.9747^n
+    assert min(gains) == int(round(base * 0.75))  # не ниже пола
