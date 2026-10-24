@@ -154,6 +154,32 @@ class Game:
         return max(DECAY_FLOOR, DECAY ** n)
 
     def complete(self, task) -> tuple[int, list[str]]:
+        sid = task["series_id"] or task["id"]
+        row = self.db.one("SELECT current, best, last_date FROM streaks WHERE series_id=?", (sid,))
+        h0 = self.hero()
+        before = {"tid": task["id"], "sid": sid, "streak": dict(row) if row else None, "xp": h0["xp"], "hp": h0["hp"], "gold": h0["gold"]}
+        xp, msgs = self._complete(task)
+        h1 = self.hero()
+        # журнал для «↩ Отменить»: дельты, а не снимок, чтобы не затереть то, что случилось после
+        self.last_undo = {**before, "dxp": h1["xp"] - before["xp"], "dhp": h1["hp"] - before["hp"],
+                          "dgold": h1["gold"] - before["gold"]}
+        return xp, msgs
+
+    def revert(self, u: dict) -> None:
+        """Откат «Сделал» по журналу: XP, HP, золото и стрик серии как были. Ачивки остаются."""
+        self.db.x("UPDATE hero SET xp=MAX(0, xp-?), hp=MAX(0, MIN(?, hp-?)), gold=MAX(0, gold-?) WHERE id=1",
+                  (u["dxp"], MAX_HP, u["dhp"], u["dgold"]))
+        if u["streak"] is None:
+            self.db.x("DELETE FROM streaks WHERE series_id=?", (u["sid"],))
+        else:
+            s = u["streak"]
+            self.db.x("UPDATE streaks SET current=?, best=?, last_date=? WHERE series_id=?",
+                      (s["current"], s["best"], s["last_date"], u["sid"]))
+        # запись «done» уходит из журнала: иначе её считали бы затухание XP и счётчики ачивок
+        self.db.x("DELETE FROM events WHERE id=(SELECT MAX(id) FROM events WHERE kind='done' AND task_id=?)", (u["tid"],))
+        self._event("undone", u["tid"], xp=-u["dxp"])
+
+    def _complete(self, task) -> tuple[int, list[str]]:
         xp = self.xp_for(task)
         msgs: list[str] = []
         streak = 0

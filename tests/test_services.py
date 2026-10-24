@@ -475,3 +475,19 @@ def test_day_start_keeps_night_hours_in_previous_day(env):
     clock.dt = datetime(2026, 9, 28, 4, 1, tzinfo=TZ)  # после 4:00 день сменился, 27-е пропущено
     missed, _ = svc.rollover()
     assert [m["id"] for m in missed] == [t["id"]]
+
+
+def test_undo_done_returns_reward_streak_and_removes_next_instance(env):
+    svc, clock = env
+    [t] = svc.create("каждый день в 7 утра йога")
+    h0 = svc.game.hero()
+    xp, _, nxt = svc.done(t["id"])
+    assert xp > 0 and nxt and svc.db.one("SELECT current FROM streaks")["current"] == 1
+    back, spawned = svc.undo_done(t["id"])
+    h1 = svc.game.hero()
+    assert back["status"] == "open" and spawned == nxt["id"] and svc.get(nxt["id"])["status"] == "deleted"
+    assert (h1["xp"], h1["hp"], h1["gold"]) == (h0["xp"], h0["hp"], h0["gold"])
+    assert svc.db.one("SELECT COUNT(*) n FROM streaks")["n"] == 0
+    assert svc.undo_done(t["id"]) is None  # второй тап
+    xp2, _, _ = svc.done(t["id"])  # снова «Сделал»: награда как в первый раз, фарма нет
+    assert xp2 == xp

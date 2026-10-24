@@ -325,7 +325,7 @@ def build(app: App) -> Router:
         await handle_text(app, m, m.text, "tg")
 
     # ---------- кнопки ----------
-    @r.callback_query(F.data.regexp(r"^(q|h|boss|d|x|s|tm|sk|f|ym|st):"))
+    @r.callback_query(F.data.regexp(r"^(q|h|boss|d|ud|x|s|tm|sk|f|ym|st):"))
     async def cb(c: CallbackQuery):
         parts = c.data.split(":")
         act, tid = parts[0], int(parts[1])
@@ -359,9 +359,17 @@ def build(app: App) -> Router:
                 await c.answer("Уже закрыто")
                 return
             xp, msgs = await app.done(tid, notify_tg=False)
-            await c.message.edit_text(f"✅ <s>{escape(t['title'])}</s>  +{xp} XP")
+            await c.message.edit_text(f"✅ <s>{escape(t['title'])}</s>  +{xp} XP", reply_markup=keyboards.undo_done(tid))
             await c.answer(f"+{xp} XP")
             await app.announce(msgs)
+        elif act == "ud":
+            t = await app.undo_done(tid)
+            if not t:
+                await c.answer("Уже не отменить")
+                return
+            await c.message.edit_text(f"↩ {escape(t['title'])} снова открыта, награда возвращена",
+                                      reply_markup=keyboards.remind(t))
+            await c.answer("Отменил")
         elif act == "x":
             await app.delete(tid)
             await c.message.edit_text(f"🗑 <s>{escape(t['title'])}</s>")

@@ -38,6 +38,12 @@ def remind(t) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
+def undo_done(tid: int) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="↩ Отменить", callback_data=f"ud:{tid}")
+    return b.as_markup()
+
+
 def overdue_check(t) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="✅ Сделал", callback_data=f"d:{t['id']}")

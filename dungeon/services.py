@@ -190,7 +190,29 @@ class Service:
             self._queue_calendar(tid, "delete")  # серию в календаре не трогаем, это одна её строка
         xp, msgs = self.game.complete(t)
         nxt = self._spawn_next(t)
+        self.db.set(f"undo_done:{tid}", json.dumps({**self.game.last_undo, "spawned": nxt["id"] if nxt else None}))
         return xp, msgs, nxt
+
+    def undo_done(self, tid: int):
+        """«↩ Отменить» после «Сделал» (промах пальцем): задача снова открыта, награда и стрик возвращены,
+        следующий экземпляр серии убран. -> (задача, id убранного экземпляра) или None."""
+        t = self.get(tid)
+        raw = self.db.get(f"undo_done:{tid}")
+        if not t or t["status"] != "done" or not raw:
+            return None
+        u = json.loads(raw)
+        self.game.revert(u)
+        spawned = u.get("spawned")
+        if spawned and (s := self.get(spawned)) and s["status"] == "open":
+            self.db.x("UPDATE tasks SET status='deleted' WHERE id=?", (spawned,))
+        else:
+            spawned = None
+        self.db.x("UPDATE tasks SET status='open', done_at=NULL WHERE id=?", (tid,))
+        self.db.x("DELETE FROM kv WHERE key=?", (f"undo_done:{tid}",))
+        self._reschedule(tid)
+        if not t["rrule"]:
+            self._queue_calendar(tid, "upsert")
+        return self.get(tid), spawned
 
     def skip(self, tid: int):
         """Пропустить экземпляр повторяющейся задачи без штрафа."""

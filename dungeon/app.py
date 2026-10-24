@@ -187,6 +187,16 @@ class App:
             await self.announce(msgs)
         return xp, msgs
 
+    async def undo_done(self, task_id: int):
+        res = self.svc.undo_done(task_id)
+        if res:
+            t, spawned = res
+            if spawned:
+                await self.ins.cancel(spawned)
+            await self.ins.sync(t)
+            return t
+        return None
+
     async def delete(self, task_id: int) -> list[str]:
         msgs = self.svc.delete(task_id)
         await self.ins.cancel(task_id)
