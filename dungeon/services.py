@@ -9,7 +9,7 @@ from dateutil.rrule import rrulestr
 
 from . import caldav_sync, config
 from .db import DB, iso, parse_iso, utcnow
-from .game import Game
+from .game import Game, game_date
 from .parser import Parsed, parse
 
 
@@ -281,13 +281,14 @@ class Service:
         """Ритуалы, не сделанные до конца своего дня, считаются пропущенными.
         Просроченные повторяющиеся задачи порождают следующий экземпляр."""
         now = self.clock()
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        ds = self.db.get("day_start") or "00:00"
+        start = datetime.combine(game_date(now, ds), hm(ds), now.tzinfo)  # начало игрового дня
         missed, msgs = [], []
         for t in self.db.q("SELECT * FROM tasks WHERE status='open' AND due_at IS NOT NULL"):
             due = parse_iso(t["due_at"]).astimezone(now.tzinfo)
             if due >= start:
                 continue
-            if t["is_habit"] and self.resting(due.date()):  # отпуск/болезнь: ни штрафа, ни сгоревшего стрика
+            if t["is_habit"] and self.resting(game_date(due, self.db.get("day_start"))):  # отпуск/болезнь: ни штрафа, ни сгоревшего стрика
                 self.db.x("UPDATE tasks SET status='skipped' WHERE id=?", (t["id"],))
                 self._spawn_next(t)
             elif t["is_habit"]:

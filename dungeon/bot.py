@@ -66,9 +66,10 @@ SETTABLE = {
     "hours_weekday": "часов на задачи в будни", "hours_weekend": "часов на задачи в выходные",
     "coach_time": "время планирования недели в воскресенье",
     "free_from": "«Свободен?» не раньше", "free_to": "«Свободен?» не позже", "free_max": "«Свободен?» раз в день",
+    "day_start": "начало игрового дня (04:00 = до 4 утра ещё вчера)",
 }
 TIME_KEYS = {"morning", "evening", "quiet_from", "quiet_to", "habit_time", "weekly_time", "morning_from",
-             "evening_cl_fallback", "coach_time", "free_from", "free_to"}
+             "evening_cl_fallback", "coach_time", "free_from", "free_to", "day_start"}
 
 
 class OwnerOnly(BaseMiddleware):

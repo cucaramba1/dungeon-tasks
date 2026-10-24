@@ -463,3 +463,15 @@ def test_frequent_habit_gives_decaying_base_xp_with_floor(env):
     base = gains[0]  # первый раз без затухания
     assert all(a >= b for a, b in zip(gains, gains[1:])) and gains[5] < base  # 0.9747^n
     assert min(gains) == int(round(base * 0.75))  # не ниже пола
+
+
+def test_day_start_keeps_night_hours_in_previous_day(env):
+    svc, clock = env
+    svc.db.set("day_start", "04:00")
+    [t] = svc.create("каждый день в 7 утра йога")  # сейчас 26.09 18:30, первый раз 27.09 в 7:00
+    clock.dt = datetime(2026, 9, 28, 3, 30, tzinfo=TZ)  # 3:30 ночи 28-го: игровой день ещё 27-е
+    missed, _ = svc.rollover()
+    assert missed == []
+    clock.dt = datetime(2026, 9, 28, 4, 1, tzinfo=TZ)  # после 4:00 день сменился, 27-е пропущено
+    missed, _ = svc.rollover()
+    assert [m["id"] for m in missed] == [t["id"]]

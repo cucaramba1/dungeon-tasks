@@ -24,6 +24,7 @@ from . import (
 from .app import App
 from .bot import send_triage
 from .db import iso, parse_iso
+from .game import game_date
 from .services import hm
 
 log = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ async def tick(app: App) -> None:
     time.tzset()  # переехал в другой часовой пояс — подхватываем без рестарта
     svc, db = app.svc, app.db
     now = svc.clock()
-    today = now.date().isoformat()
+    today = game_date(now, db.get("day_start")).isoformat()  # игровой день: смена суток и сводки по day_start
 
     # 1. смена суток: штрафы за ритуалы, бэкап
     if db.get("last_day") != today:

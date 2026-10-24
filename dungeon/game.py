@@ -81,6 +81,12 @@ def level_for(xp: int) -> int:
     return lvl
 
 
+def game_date(now: datetime, day_start: str = "00:00"):
+    """Игровой день (Habitica dayStart): при day_start 04:00 в 3 часа ночи ещё вчера."""
+    h, m = (int(x) for x in (day_start or "00:00").split(":"))
+    return (now - timedelta(hours=h, minutes=m)).date()
+
+
 def title_for(level: int) -> str:
     return [t for lv, t in TITLES if lv <= level][-1]
 
@@ -200,7 +206,7 @@ class Game:
 
     def _streak_hit(self, task) -> int:
         sid = task["series_id"] or task["id"]
-        today = self.clock().date()
+        today = game_date(self.clock(), self.db.get("day_start"))
         row = self.db.one("SELECT * FROM streaks WHERE series_id=?", (sid,))
         if row is None:
             cur = 1
