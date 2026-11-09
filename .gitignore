@@ -13,3 +13,7 @@ wheels/
 .env
 data/
 logs/
+
+# Мусор macOS и локальные черновики
+.DS_Store
+tmp/
