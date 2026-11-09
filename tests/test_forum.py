@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from dungeon import bot, config, scheduler
+from dungeon import bot, config, scheduler, stuck
 from dungeon.app import App
 from dungeon.db import DB
 
@@ -138,6 +138,19 @@ def test_plan_topic_without_session_hints_not_task(app):
     m, answers = msg(app, thread=11)
     asyncio.run(bot.handle_text(app, m, "купить молоко", "tg"))
     assert app.svc.open_tasks() == [] and "/plan" in answers[0]
+
+
+def test_stuck_interrupts_active_plan_in_plan_topic(app):
+    configure(app)
+    app.planner.start()
+    stuck.start(app.db, None)
+    m, answers = msg(app, thread=11)
+    asyncio.run(bot.handle_text(app, m, "разбираю почту", "tg"))
+    assert app.planner.active()["inputs"] in ({}, "{}")
+    assert stuck.active(app.db)["step"] == 1
+    stuck.cancel(app.db)
+    asyncio.run(bot.handle_text(app, m, "на неделе хочу запустить бота", "tg"))
+    assert app.planner.active()["inputs"]
 
 
 def test_without_forum_old_behaviour_planning_intercepts(app):

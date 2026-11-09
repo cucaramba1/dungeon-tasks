@@ -536,7 +536,7 @@ async def handle_text(app: App, m: Message, text: str, source: str) -> None:
     in_plan = in_plan_topic(app, m)
     if in_plan:
         app.track("plan", m.chat.id, m.message_id)
-    if not in_plan and stuck.active(app.db):
+    if stuck.active(app.db):
         await stuck_answer(app, m, text)
         return
     if app.planner.active() and in_plan:
