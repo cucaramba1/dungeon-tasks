@@ -62,10 +62,19 @@ def answer(db: DB, text: str) -> tuple[str, dict | None]:
         if mins is None:
             return "Нужно число минут, например 2.", None
         if mins > MAX_STEP_MIN:
-            s["step"] = 4
+            s["bounces"] = s.get("bounces", 0) + 1
             s["answers"] = s["answers"][:4]
+            if s["bounces"] >= 2:
+                s["answers"] += [f"открыть «{s['answers'][0]}» и 2 минуты просто смотреть на неё", str(MAX_STEP_MIN)]
+                s["step"] = 6
+                _save(db, s)
+                return ("Два раза не порезалось, берём запасной шаг: открыть дело и 2 минуты просто "
+                        "смотреть на него. Этого хватит, чтобы начать.\n\n") + _ask(s), None
+            s["step"] = 4
             _save(db, s)
-            return f"{mins} мин многовато. Режь до {MAX_STEP_MIN} минут.\n\n" + _ask(s), None
+            return (f"{mins} мин многовато. Режь до {MAX_STEP_MIN} минут.\n"
+                    "<i>Шаг не «сделать», а «начать»: открыть файл, написать одну строку, достать ноут, "
+                    "написать заголовок. Не режется? /cancel и скажи, что мешает.</i>\n\n") + _ask(s), None
         text = str(mins)
     s["answers"].append(text)
     s["step"] += 1

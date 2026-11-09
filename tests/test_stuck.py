@@ -35,6 +35,15 @@ def test_step_over_two_minutes_goes_back():
     assert res["step"] == "мелкий шаг"
 
 
+def test_two_bounces_in_a_row_give_fallback_step():
+    db = mk()
+    stuck.start(db)
+    run(db, ["дело", "b", "c", "d", "большой шаг", "15", "всё равно большой", "20"])
+    assert stuck.active(db)["step"] == 6
+    _, res = run(db, ["награда"])
+    assert res["minutes"] == 2 and "дело" in res["step"] and res["reward"] == "награда"
+
+
 def test_minutes_must_be_number():
     db = mk()
     stuck.start(db)
